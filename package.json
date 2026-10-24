@@ -1,0 +1,60 @@
+{
+  "name": "student-daily-planner",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Mobile-first student daily planner: Wardrobe, Fridge and Planner, running entirely in the browser.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --ext .ts,.tsx",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "e2e": "playwright test",
+    "deploy:check": "npm run typecheck && npm run lint && npm run test && npm run build"
+  },
+  "dependencies": {
+    "@google/genai": "^0.14.0",
+    "@huggingface/transformers": "^3.1.0",
+    "@zxing/browser": "^0.2.1",
+    "date-fns": "^4.1.0",
+    "fast-average-color": "^9.4.0",
+    "idb": "^8.0.0",
+    "lucide-react": "^0.456.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-leaflet": "^4.2.1",
+    "leaflet": "^1.9.4",
+    "tesseract.js": "^5.1.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.14.0",
+    "@playwright/test": "^1.48.2",
+    "@types/leaflet": "^1.9.12",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@typescript-eslint/eslint-plugin": "^8.14.0",
+    "@typescript-eslint/parser": "^8.14.0",
+    "@vitejs/plugin-react": "^4.3.3",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^9.14.0",
+    "eslint-plugin-react-hooks": "^5.0.0",
+    "eslint-plugin-react-refresh": "^0.4.14",
+    "jsdom": "^25.0.1",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.14",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11",
+    "vitest": "^2.1.4"
+  },
+  "allowScripts": {
+    "esbuild@0.21.5": true,
+    "onnxruntime-node@1.21.0": true,
+    "protobufjs@7.6.6": true,
+    "sharp@0.34.5": true,
+    "tesseract.js@5.1.1": true
+  }
+}
