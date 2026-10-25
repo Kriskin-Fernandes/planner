@@ -2,12 +2,11 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// GitHub Pages base path handling:
-// - For a PROJECT site (https://<user>.github.io/<repo>/) set VITE_BASE_PATH="/<repo>/"
-//   (the deploy workflow sets this automatically from the repository name).
-// - For a USER/ORG site (https://<user>.github.io/) the base must be "/".
-// - For local dev/preview it defaults to "/".
-const base = process.env.VITE_BASE_PATH || '/';
+// Automatically set the base path for GitHub Pages production builds ('/planner/')
+// while keeping '/' for local development and testing.
+const base = process.env.NODE_ENV === 'production' 
+  ? (process.env.VITE_BASE_PATH || '/planner/') 
+  : '/';
 
 export default defineConfig({
   base,
