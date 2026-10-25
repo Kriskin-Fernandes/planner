@@ -163,15 +163,18 @@ export function recommendOutfits(
 
   const wantsOuter = (ctx.weatherTempC ?? 15) < 12 || (ctx.precipitationChance ?? 0) > 0.4;
   const wantsHead = (ctx.weatherTempC ?? 15) < 5;
+  // On cold or wet days, every generated combination includes an outer layer
+  // when one is available. Try the warmest pieces first so a low-warmth base
+  // outfit is lifted by the strongest suitable layer.
+  const outerOptions: (Garment | undefined)[] = wantsOuter && outerwear.length
+    ? [...outerwear].sort((a, b) => b.warmthScore - a.warmthScore)
+    : [undefined];
 
   const results: OutfitCandidateScore[] = [];
   for (const top of tops.length ? tops : [undefined]) {
     for (const bottom of bottoms.length ? bottoms : [undefined]) {
       for (const shoe of footwear.length ? footwear : [undefined]) {
-        const combos: (Garment | undefined)[][] = [[]];
-        if (wantsOuter && outerwear.length) {
-          combos.push([outerwear[0]]);
-        }
+        const combos = outerOptions.map((outer) => outer ? [outer] : []);
         for (const extra of combos) {
           const set = [top, bottom, shoe, ...(wantsHead && headwear.length ? [headwear[0]] : []), ...extra].filter(
             (g): g is Garment => !!g

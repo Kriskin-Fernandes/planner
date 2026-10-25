@@ -46,7 +46,7 @@ function Shell() {
     }).catch(() => { /* Smart Shopping will show a clear price feed error if the source is unavailable. */ });
     if (settings.googleMapsApiKey.trim()) {
       void (async () => {
-        const home = await geocode(settings.homeAddress || '69 Yeldham Road, W6 8JQ');
+        const home = await geocode(settings.homeAddress || '42 Redfield Lane, London, SW5 0RQ');
         const uni = await geocode('Imperial College London');
         if (home.status !== 'ok' || uni.status !== 'ok' || !home.data[0] || !uni.data[0]) return;
         const route = await getTransitWalkingSegments(uni.data[0].point, home.data[0].point, settings.googleMapsApiKey.trim());

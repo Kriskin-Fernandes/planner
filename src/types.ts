@@ -420,7 +420,7 @@ export const ApplicationSettingsSchema = z.object({
   overpassBaseUrl: z.string().default('https://overpass-api.de/api/interpreter'),
   photonBaseUrl: z.string().default('https://photon.komoot.io'),
   onboardingSeen: z.boolean().default(false),
-  homeAddress: z.string().default('69 Yeldham Road, W6 8JQ'),
+  homeAddress: z.string().default('42 Redfield Lane, London, SW5 0RQ'),
 });
 export type ApplicationSettings = z.infer<typeof ApplicationSettingsSchema>;
 

@@ -252,6 +252,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         await kvSet('requested-tasks-v1', true);
       }
 
+      // Update the saved address and move the existing medicine errand to the
+      // Cromwell Hospital location on existing browser profiles as well.
+      if (!(await kvGet<boolean>('cromwell-home-errand-v1'))) {
+        const savedSettings = await kvGet<ApplicationSettings>('settings');
+        if (savedSettings) {
+          await kvSet('settings', ApplicationSettingsSchema.parse({
+            ...savedSettings,
+            homeAddress: '42 Redfield Lane, London, SW5 0RQ'
+          }));
+        }
+        for (const task of await tasksStore.all()) {
+          const medicineErrand = /medicine/i.test(task.title) && (/hammersmith pharmacy/i.test(task.title) || /hammersmith pharmacy/i.test(task.location ?? ''));
+          if (medicineErrand) {
+            await tasksStore.put({ ...task, title: 'Get medicine from Cromwell Hospital', location: 'Cromwell Hospital', updatedAt: nowIso() });
+          }
+        }
+        await kvSet('cromwell-home-errand-v1', true);
+      }
+
       if (!(await kvGet<boolean>('today-agenda-tasks-v1'))) {
         const today = new Date();
         today.setHours(9, 0, 0, 0);
@@ -434,7 +453,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const legacyGeminiModel = (model: string | undefined) => model === 'gemini-2.5-flash' ? 'gemini-3.8-flash' : model;
       const migratedSettings = settingsRaw ? {
         ...settingsRaw,
-        homeAddress: settingsRaw.homeAddress === '69 Yeldham road' ? '69 Yeldham Road, W6 8JQ' : settingsRaw.homeAddress,
+        homeAddress: settingsRaw.homeAddress === '69 Yeldham road' ? '42 Redfield Lane, London, SW5 0RQ' : settingsRaw.homeAddress,
         geminiModels: {
           ...settingsRaw.geminiModels,
           textModel: legacyGeminiModel(settingsRaw.geminiModels?.textModel) ?? 'gemini-3.8-flash',
