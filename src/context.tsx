@@ -48,7 +48,7 @@ import {
   getImageBlob
 } from './db';
 import { applyWearToGarments, completeWash as completeWashTransform, consumeIngredients, reconcileShoppingList, icsToEvents } from './services';
-import { DEFAULT_LAUNDRY_GROUP_DEFS, buildSeedGarments, buildSeedOutfit, buildSeedFood, buildSeedRecipes, buildSeedShoppingItems, buildSeedTasks, buildSeedEvents } from './data';
+import { DEFAULT_LAUNDRY_GROUP_DEFS, buildSeedGarments, buildSeedOutfit, buildStarterOutfits, buildSeedFood, buildSeedRecipes, buildSeedShoppingItems, buildSeedTasks, buildSeedEvents } from './data';
 import { loadPersistedApiKeyIfAny } from './ai';
 
 export interface Toast {
@@ -350,9 +350,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         const photoGarments = (await buildSeedGarments()).filter((g) => !garmentNames.has(g.name));
         if (photoGarments.length) await garmentsStore.putMany(photoGarments);
         const allGarments = await garmentsStore.all();
-        if (!(await outfitsStore.all()).length) {
+        const waterproofNames = new Set(['Blue Zip Up', 'Black Zip Up']);
+        for (const garment of allGarments) if (waterproofNames.has(garment.name) && !garment.features.waterproof) {
+          await garmentsStore.put({ ...garment, features: { ...garment.features, waterproof: true }, updatedAt: new Date().toISOString() });
+        }
+        const existingOutfits = await outfitsStore.all();
+        const outfitNames = new Set(existingOutfits.map((outfit) => outfit.name));
+        const starterOutfits = buildStarterOutfits(allGarments).filter((outfit) => !outfitNames.has(outfit.name));
+        if (starterOutfits.length) await outfitsStore.putMany(starterOutfits);
+        if (!existingOutfits.length) {
           const starterOutfit = buildSeedOutfit(allGarments);
-          if (starterOutfit) await outfitsStore.put(starterOutfit);
+          if (starterOutfit && !starterOutfits.some((outfit) => outfit.name === starterOutfit.name)) await outfitsStore.put(starterOutfit);
         }
 
         const oldRecipes = (await recipesStore.all()).filter((r) => legacyImage(r.image));
@@ -378,6 +386,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         const photoShopItems = buildSeedShoppingItems().filter((i) => !shoppingNames.has(i.name));
         if (photoShopItems.length) await shoppingItemsStore.putMany(photoShopItems);
         await kvSet('photo-catalog-v2-replaced', true);
+      }
+
+      if (!(await kvGet<boolean>('starter-outfits-waterproof-v1'))) {
+        const wardrobe = await garmentsStore.all();
+        for (const garment of wardrobe) if (['Blue Zip Up', 'Black Zip Up'].includes(garment.name) && !garment.features.waterproof) {
+          await garmentsStore.put({ ...garment, features: { ...garment.features, waterproof: true }, updatedAt: new Date().toISOString() });
+        }
+        const savedOutfits = await outfitsStore.all();
+        const savedNames = new Set(savedOutfits.map((outfit) => outfit.name));
+        const starters = buildStarterOutfits(wardrobe).filter((outfit) => !savedNames.has(outfit.name));
+        if (starters.length) await outfitsStore.putMany(starters);
+        await kvSet('starter-outfits-waterproof-v1', true);
       }
 
       // Set the requested pantry stock and keep the starter shopping list to
@@ -460,6 +480,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           visionModel: legacyGeminiModel(settingsRaw.geminiModels?.visionModel) ?? 'gemini-3.8-flash'
         }
       } : undefined;
+      const warmthBiasMigrated = await kvGet<boolean>('warmth-bias-plus-two-v1');
+      const loadedPreferences = UserPreferencesSchema.parse(preferencesRaw ?? {});
+      if (!warmthBiasMigrated) {
+        loadedPreferences.warmthBias = 2;
+        await kvSet('preferences', loadedPreferences);
+        await kvSet('warmth-bias-plus-two-v1', true);
+      }
       setState((s) => ({
         ...s,
         loading: false,
@@ -475,7 +502,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         calendarEvents,
         tasks,
         reminders,
-        preferences: preferencesRaw ? UserPreferencesSchema.parse(preferencesRaw) : s.preferences,
+        preferences: loadedPreferences,
         settings: migratedSettings ? ApplicationSettingsSchema.parse(migratedSettings) : s.settings
       }));
       if (migratedSettings) await db.kvSet('settings', ApplicationSettingsSchema.parse(migratedSettings));

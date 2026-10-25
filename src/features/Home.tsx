@@ -1,23 +1,39 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { CalendarDays, MapPin, Navigation, Shirt, Wind, Droplets } from 'lucide-react';
 import { useApp } from '../context';
-import { Button, Card, Badge, BlobImage } from '../components';
-import { recommendOutfits } from '../services';
+import { Button, Card, Badge, BlobImage, Sheet } from '../components';
+import { evaluateOutfitCandidate, garmentAvailability, recommendOutfits } from '../services';
 import { geocode } from '../geo';
 import type { GeoPoint } from '../types';
 
 export default function Home({ openPlanner }: { openPlanner: () => void }) {
-  const { tasks, calendarEvents, garments, shoppingItems, settings, preferences } = useApp();
+  const { tasks, calendarEvents, garments, shoppingItems, settings, preferences, updatePreferences } = useApp();
   const [weather, setWeather] = useState<any>(null);
   const [weatherError, setWeatherError] = useState('');
+  const [customizeOpen, setCustomizeOpen] = useState(false);
+  const [draftGarmentIds, setDraftGarmentIds] = useState<string[]>([]);
   const today = new Date();
   const dayTasks = useMemo(() => tasks.filter(t => !t.completed && (t.recurrence.freq === 'daily' || (t.dueAt && new Date(t.dueAt).toDateString() === today.toDateString()))), [tasks]);
   const todayEvents = useMemo(() => calendarEvents.filter(e => new Date(e.start).toDateString() === today.toDateString()), [calendarEvents]);
-  const recommendation = useMemo(() => recommendOutfits(garments, {
+  const outfitContext = {
     weatherTempC: weather?.current?.temperature_2m,
     precipitationChance: weather?.current?.precipitation > 0 ? 0.7 : 0.1,
+    warmthBias: preferences.warmthBias,
     maxResults: 1
-  })[0], [garments, weather]);
+  };
+  const recommendation = useMemo(() => {
+    const picked = preferences.dailyOutfitGarmentIds.map((id) => garments.find((g) => g.id === id)).filter((g): g is NonNullable<typeof g> => !!g && garmentAvailability(g).available);
+    return picked.length >= 2 ? evaluateOutfitCandidate(picked, outfitContext) : recommendOutfits(garments, outfitContext)[0];
+  }, [garments, weather, preferences.warmthBias, preferences.dailyOutfitGarmentIds]);
+  const openOutfitEditor = () => {
+    setDraftGarmentIds(preferences.dailyOutfitGarmentIds.length ? [...preferences.dailyOutfitGarmentIds] : recommendation?.garments.map((g) => g.id) ?? []);
+    setCustomizeOpen(true);
+  };
+  const toggleDraftGarment = (id: string, category: string) => setDraftGarmentIds((current) => {
+    const isSelected = current.includes(id);
+    const withoutCategory = current.filter((currentId) => garments.find((g) => g.id === currentId)?.category !== category);
+    return isSelected ? withoutCategory : [...withoutCategory, id];
+  });
 
   useEffect(() => {
     let active = true;
@@ -77,7 +93,10 @@ export default function Home({ openPlanner }: { openPlanner: () => void }) {
       <div className="mt-5 flex items-center gap-4"><span className="text-5xl" aria-label="weather">{current ? weatherIcon(current.weather_code) : '🌤️'}</span><div><p className="text-3xl font-semibold">{current ? `${Math.round(current.temperature_2m)}°` : '—'}</p><p className="text-sm text-slate-700">{current ? weatherDescription(current.weather_code) : 'Weather'}</p><p className="text-xs text-slate-500">{weatherError || (current ? `${settings.homeAddress} · ${rainWindow}` : 'Loading local forecast…')}</p></div></div>
       {current && <div className="flex gap-4 mt-4 text-xs text-slate-600"><span className="flex items-center gap-1"><Wind size={14}/> {Math.round(current.wind_speed_10m)} km/h</span><span className="flex items-center gap-1"><Droplets size={14}/> {current.relative_humidity_2m}% humidity</span></div>}
     </Card>
-    {recommendation && <Card className="p-4"><div className="flex items-center gap-2 mb-3"><Shirt size={17} className="text-indigo-600"/><h3 className="font-semibold">Today’s outfit</h3></div><div className="grid grid-cols-[1fr_0.8fr] gap-4 items-center"><div className="flex flex-col gap-2">{recommendation.garments.map(g => <div key={g.id} className="flex flex-col items-center rounded-xl bg-slate-50 p-2"><div className="flex w-full justify-center"><BlobImage blobKey={g.images[0]?.blobKey} url={g.images[0]?.url} alt={g.name} fit="contain" className="block h-auto max-h-48 w-auto max-w-full"/></div><span className="mt-1 text-[11px] text-slate-500">{g.name}</span></div>)}</div><div className="space-y-2"><p className="text-sm font-semibold text-slate-800">{recommendation.totalScore} outfit score</p><div className="rounded-xl bg-indigo-50 p-3"><p className="text-xs text-slate-500">Colour harmony</p><p className="text-xl font-semibold text-indigo-700">{recommendation.metrics.colorHarmony}%</p></div><div className="rounded-xl bg-sky-50 p-3"><p className="text-xs text-slate-500">Warmth</p><p className="text-xl font-semibold text-sky-700">{recommendation.metrics.estimatedWarmth}/10</p></div><div className="rounded-xl bg-amber-50 p-3"><p className="text-xs text-slate-500">Formality</p><p className="text-xl font-semibold text-amber-700">{recommendation.metrics.formality}/10</p></div></div></div></Card>}
+    {recommendation && <Card className="p-4"><div className="flex items-center justify-between gap-2 mb-3"><div className="flex items-center gap-2"><Shirt size={17} className="text-indigo-600"/><h3 className="font-semibold">Today’s outfit</h3></div><Button variant="outline" size="sm" onClick={openOutfitEditor}>Customize</Button></div><div className="mb-3 inline-flex rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800">Warmth preference +{preferences.warmthBias} · prefers warmer outfits</div><div className="grid grid-cols-[1fr_0.8fr] gap-4 items-center"><div className="flex flex-col gap-2">{recommendation.garments.map(g => <div key={g.id} className="flex flex-col items-center rounded-xl bg-slate-50 p-2"><div className="flex w-full justify-center"><BlobImage blobKey={g.images[0]?.blobKey} url={g.images[0]?.url} alt={g.name} fit="contain" className="block h-auto max-h-48 w-auto max-w-full"/></div><span className="mt-1 text-[11px] text-slate-500">{g.name}</span></div>)}</div><div className="space-y-2"><p className="text-sm font-semibold text-slate-800">{recommendation.totalScore} outfit score</p><div className="rounded-xl bg-indigo-50 p-3"><p className="text-xs text-slate-500">Colour harmony</p><p className="text-xl font-semibold text-indigo-700">{recommendation.metrics.colorHarmony}%</p></div><div className="rounded-xl bg-sky-50 p-3"><p className="text-xs text-slate-500">Warmth</p><p className="text-xl font-semibold text-sky-700">{recommendation.metrics.estimatedWarmth}/10</p><p className="mt-1 text-[11px] text-sky-700">Adjusted for warmth preference +{preferences.warmthBias}</p></div><div className="rounded-xl bg-amber-50 p-3"><p className="text-xs text-slate-500">Formality</p><p className="text-xl font-semibold text-amber-700">{recommendation.metrics.formality}/10</p></div></div></div></Card>}
+    <Sheet open={customizeOpen} onClose={() => setCustomizeOpen(false)} title="Customize today’s outfit" wide footer={<div className="flex gap-2"><Button variant="outline" className="flex-1" onClick={async () => { await updatePreferences({ dailyOutfitGarmentIds: [] }); setCustomizeOpen(false); }}>Use recommendation</Button><Button className="flex-1" onClick={async () => { await updatePreferences({ dailyOutfitGarmentIds: draftGarmentIds }); setCustomizeOpen(false); }}>Save outfit</Button></div>}>
+      <div className="space-y-4 overflow-y-auto p-4"><p className="text-sm text-slate-500">Choose one item per category. Your selection is saved for future visits.</p>{['tops','bottoms','outerwear','footwear','headwear','accessories'].map(category => { const options = garments.filter(g => g.category === category && garmentAvailability(g).available); return options.length ? <section key={category}><h4 className="mb-2 text-sm font-semibold capitalize text-slate-700">{category}</h4><div className="grid grid-cols-2 gap-2 sm:grid-cols-3">{options.map(g => <button key={g.id} type="button" aria-pressed={draftGarmentIds.includes(g.id)} onClick={() => toggleDraftGarment(g.id, category)} className={`rounded-xl border p-2 text-left ${draftGarmentIds.includes(g.id) ? 'border-indigo-500 bg-indigo-50 ring-1 ring-indigo-300' : 'border-slate-200 bg-white'}`}><BlobImage blobKey={g.images[0]?.blobKey} url={g.images[0]?.url} alt={g.name} fit="contain" className="mx-auto block h-28 w-auto max-w-full object-contain"/><span className="mt-1 block text-xs text-slate-700">{g.name}</span></button>)}</div></section> : null; })}</div>
+    </Sheet>
     <Card className="p-4"><div className="flex items-center justify-between mb-3"><div className="flex items-center gap-2"><MapPin size={17} className="text-indigo-600"/><h3 className="font-semibold text-slate-800">Today’s agenda</h3></div><Badge tone="indigo">{dayTasks.length + todayEvents.length} items</Badge></div><div className="space-y-3">
       {assignmentTasks.map(task => <div key={task.id} className="flex gap-3 rounded-xl bg-amber-50 p-3"><span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-amber-500"/><div><p className="text-xs font-semibold uppercase tracking-wide text-amber-800">Assignment due today</p><p className="text-sm font-medium text-slate-800">{task.title}</p></div></div>)}
       {generalTasks.map(task => <div key={task.id} className="flex gap-3 rounded-xl bg-slate-50 p-3"><span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-indigo-500"/><p className="text-sm text-slate-700">{task.title}</p></div>)}

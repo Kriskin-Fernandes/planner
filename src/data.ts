@@ -117,7 +117,7 @@ function img(label: string, url: string, kind: 'original' | 'display' = 'display
 // ---------- Seed builders -------------------------------------------------------
 
 export async function buildSeedGarments(): Promise<Garment[]> {
-  const defs: Array<{ name: string; category: Garment['category']; mainColor: string; layerRole: Garment['layerRole']; warmthScore: number; thickness: Garment['thickness'] }> = [
+  const defs: Array<{ name: string; category: Garment['category']; mainColor: string; layerRole: Garment['layerRole']; warmthScore: number; thickness: Garment['thickness']; features?: Garment['features'] }> = [
     { name: 'White Tee', category: 'tops', layerRole: 'base', mainColor: '#f5f5f5', thickness: 'light', warmthScore: 2 },
     { name: 'White Long Sleeve', category: 'tops', layerRole: 'base', mainColor: '#f5f5f5', thickness: 'light', warmthScore: 3 },
     { name: 'Pink Shirt', category: 'tops', layerRole: 'base', mainColor: '#e9a1b1', thickness: 'light', warmthScore: 3 },
@@ -132,8 +132,8 @@ export async function buildSeedGarments(): Promise<Garment[]> {
     { name: 'Cream Hoodie', category: 'tops', layerRole: 'middle', mainColor: '#e6dfd2', thickness: 'heavy', warmthScore: 7 },
     { name: 'Cargo Trousers', category: 'bottoms', layerRole: 'base', mainColor: '#b0a88e', thickness: 'medium', warmthScore: 5 },
     { name: 'Brown Trousers', category: 'bottoms', layerRole: 'base', mainColor: '#765136', thickness: 'medium', warmthScore: 5 },
-    { name: 'Blue Zip Up', category: 'outerwear', layerRole: 'outer', mainColor: '#416786', thickness: 'medium', warmthScore: 5 },
-    { name: 'Black Zip Up', category: 'outerwear', layerRole: 'outer', mainColor: '#252525', thickness: 'medium', warmthScore: 5 },
+    { name: 'Blue Zip Up', category: 'outerwear', layerRole: 'outer', mainColor: '#416786', thickness: 'medium', warmthScore: 5, features: { hood: false, waterproof: true, insulated: false, moistureWicking: false } },
+    { name: 'Black Zip Up', category: 'outerwear', layerRole: 'outer', mainColor: '#252525', thickness: 'medium', warmthScore: 5, features: { hood: false, waterproof: true, insulated: false, moistureWicking: false } },
     { name: 'Black Tee', category: 'tops', layerRole: 'base', mainColor: '#171717', thickness: 'light', warmthScore: 2 },
     { name: 'Black Hoodie', category: 'tops', layerRole: 'middle', mainColor: '#202020', thickness: 'heavy', warmthScore: 7 },
     { name: 'Beige Jacket', category: 'outerwear', layerRole: 'outer', mainColor: '#cab9a1', thickness: 'heavy', warmthScore: 7 }
@@ -191,6 +191,27 @@ export function buildSeedOutfit(garments: Garment[]): Outfit | null {
     createdAt: nowIso(),
     updatedAt: nowIso()
   };
+}
+
+export function buildStarterOutfits(garments: Garment[]): Outfit[] {
+  const find = (name: string) => garments.find((g) => g.name === name);
+  const defs = [
+    ['Campus Layers', ['White Tee', 'Dark Jeans', 'Blue Zip Up']],
+    ['Soft Neutral', ['White Long Sleeve', 'Brown Trousers', 'Beige Jacket']],
+    ['Everyday Black', ['Black Tee', 'Light Jeans', 'Black Zip Up']],
+    ['Warm Cargo Day', ['Cream Hoodie', 'Green Cargo Trousers', 'Black Zip Up']],
+  ] as const;
+  return defs.flatMap(([name, names]) => {
+    const pieces = names.map(find).filter((g): g is Garment => !!g);
+    if (pieces.length < 2) return [];
+    return [{
+      id: newId(), name,
+      layers: [...new Set(pieces.map((g) => g.category))].map((category) => ({ id: newId(), category, garmentIds: pieces.filter((g) => g.category === category).map((g) => g.id) })),
+      favorite: false, rating: 4, lastWornAt: null, wearCount: 0,
+      metrics: { colorHarmony: 82, estimatedWarmth: Math.min(10, Math.round(pieces.reduce((sum, g) => sum + g.warmthScore, 0) / pieces.length)), formality: 4 },
+      createdAt: nowIso(), updatedAt: nowIso()
+    }];
+  });
 }
 
 export async function buildSeedFood(): Promise<FoodItem[]> {

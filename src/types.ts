@@ -393,7 +393,8 @@ export type SmartShoppingPlan = z.infer<typeof SmartShoppingPlanSchema>;
 // ----------------------------------------------------------------------------
 
 export const UserPreferencesSchema = z.object({
-  warmthBias: z.number().min(-3).max(3).default(0),
+  warmthBias: z.number().min(-3).max(3).default(2),
+  dailyOutfitGarmentIds: z.array(z.string()).default([]),
   preferredUnits: z.enum(['metric', 'imperial']).default('metric'),
   dietaryPreferences: z.array(z.string()).default([]),
   defaultTravelMode: TravelModeSchema.default('public-transport'),
