@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // Planner area: Schedule, To Do List and Task Grouping (incl. Smart Shopping).
 // ---------------------------------------------------------------------------
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Polyline, Popup } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -25,8 +25,9 @@ import { compareUkBasket, type BasketRetailerTotal } from '../prices';
 
 type PlannerTab = 'schedule' | 'todo' | 'grouping';
 
-export default function Planner() {
+export default function Planner({ shoppingRequest = 0 }: { shoppingRequest?: number }) {
   const [tab, setTab] = useState<PlannerTab>('schedule');
+  useEffect(() => { if (shoppingRequest > 0) setTab('grouping'); }, [shoppingRequest]);
   return (
     <div className="pb-28">
       <TabBar
@@ -40,7 +41,7 @@ export default function Planner() {
       />
       {tab === 'schedule' && <ScheduleTab />}
       {tab === 'todo' && <TodoTab />}
-      {tab === 'grouping' && <GroupingTab />}
+      {tab === 'grouping' && <GroupingTab shoppingRequest={shoppingRequest} />}
     </div>
   );
 }
@@ -461,9 +462,16 @@ function TaskEditorSheet({ value, onClose }: { value: Task | null; onClose: () =
 
 // =============================== TASK GROUPING + SMART SHOPPING =========================================
 
-function GroupingTab() {
+function GroupingTab({ shoppingRequest = 0 }: { shoppingRequest?: number }) {
   const { tasks, calendarEvents, preferences } = useApp();
   const [smartShoppingOpen, setSmartShoppingOpen] = useState(false);
+  const handledShoppingRequest = useRef(0);
+  useEffect(() => {
+    if (shoppingRequest > 0 && handledShoppingRequest.current !== shoppingRequest) {
+      handledShoppingRequest.current = shoppingRequest;
+      setSmartShoppingOpen(true);
+    }
+  }, [shoppingRequest]);
   const groups = useMemo(() => groupTasks(tasks, calendarEvents, preferences.locationTags), [tasks, calendarEvents, preferences.locationTags]);
 
   return (
@@ -563,6 +571,7 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
   const [priceTotals, setPriceTotals] = useState<BasketRetailerTotal[]>([]);
   const [priceDate, setPriceDate] = useState<string | null>(null);
   const [priceMessage, setPriceMessage] = useState('');
+  const hasAutoStarted = useRef(false);
 
   const pendingItems = shoppingItems.filter((i) => !i.purchased);
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set(pendingItems.map((i) => i.id)));
@@ -598,7 +607,8 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
     setRouteDistanceM(transitWalk.data.walkingDistanceMeters);
 
     setStatusMsg('Finding shops within walking distance of the return-route walking sections…');
-    const segmentResults = await Promise.all(transitWalk.data.segments.map((segment) => findSupermarketsNearRoute(segment, corridor)));
+    const segmentResults: Awaited<ReturnType<typeof findSupermarketsNearRoute>>[] = [];
+    for (const segment of transitWalk.data.segments) segmentResults.push(await findSupermarketsNearRoute(segment, corridor));
     const routeError = segmentResults.find((result) => result.status !== 'ok');
     if (routeError?.status === 'error') { pushToast(routeError.message, 'error'); setStage('form'); return; }
     const candidateMap = new Map<string, StoreCandidate>();
@@ -634,6 +644,12 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
     }
     setStage('results');
   }
+
+  useEffect(() => {
+    if (hasAutoStarted.current) return;
+    hasAutoStarted.current = true;
+    void runPlan();
+  }, []);
 
   function moveItem(itemId: string, toStoreId: string) {
     setAllocation((prev) => {

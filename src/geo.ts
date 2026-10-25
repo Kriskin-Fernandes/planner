@@ -12,7 +12,11 @@ import type { AiResult } from './ai';
 
 const PHOTON_URL = 'https://photon.komoot.io/api/';
 const OSRM_BASE = 'https://router.project-osrm.org'; // public demo server: low-volume prototyping only
-const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
+const OVERPASS_URLS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter'
+];
 
 const OSRM_PROFILE: Record<TravelMode, string> = {
   walking: 'foot',
@@ -79,6 +83,9 @@ function decodePolyline(encoded: string): GeoPoint[] {
 
 /** Reads the return transit itinerary and extracts only Google Maps WALK steps. */
 export async function getTransitWalkingSegments(origin: GeoPoint, destination: GeoPoint, apiKey: string): Promise<AiResult<TransitWalkRoute>> {
+  const cacheKey = `google-transit-walk:${origin.lat.toFixed(4)},${origin.lon.toFixed(4)}:${destination.lat.toFixed(4)},${destination.lon.toFixed(4)}`;
+  const cached = await aiCacheGet<TransitWalkRoute>(cacheKey);
+  if (cached) return { status: 'ok', provider: 'local', data: cached };
   try {
     const response = await fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
       method: 'POST',
@@ -98,7 +105,9 @@ export async function getTransitWalkingSegments(origin: GeoPoint, destination: G
     const walkSteps = steps.filter((step: any) => step.travelMode === 'WALK' && step.polyline?.encodedPolyline);
     const segments = walkSteps.map((step: any) => decodePolyline(step.polyline.encodedPolyline)).filter((points: GeoPoint[]) => points.length > 1);
     if (!segments.length) throw new Error('The Google Maps transit route did not include any walkable sections to search.');
-    return { status: 'ok', provider: 'local', data: { segments, walkingDistanceMeters: walkSteps.reduce((sum: number, step: any) => sum + Number(step.distanceMeters ?? 0), 0), durationSeconds: Number(String(route.duration ?? '0s').replace('s', '')) } };
+    const data = { segments, walkingDistanceMeters: walkSteps.reduce((sum: number, step: any) => sum + Number(step.distanceMeters ?? 0), 0), durationSeconds: Number(String(route.duration ?? '0s').replace('s', '')) };
+    await aiCacheSet(cacheKey, data);
+    return { status: 'ok', provider: 'local', data };
   } catch (err) {
     return { status: 'error', provider: 'local', errorType: /API HTTP 4(00|03)/i.test(String(err)) ? 'invalid-key' : /failed to fetch|network/i.test(String(err)) ? 'network' : 'unavailable', message: err instanceof Error ? err.message : String(err) };
   }
@@ -145,7 +154,18 @@ function routeBoundingBox(route: GeoPoint[], paddingMeters: number): { south: nu
 /** Query Overpass for supermarkets/grocery stores within the route's bounding
  * box (further filtered to the corridor by `filterStoresNearRoute` in
  * services.ts using actual route geometry, not just the bounding box). */
-export async function findSupermarketsNearRoute(route: GeoPoint[], corridorWidthMeters: number): Promise<AiResult<StoreCandidate[]>> {
+const activeStoreSearches = new Map<string, Promise<AiResult<StoreCandidate[]>>>();
+
+export function findSupermarketsNearRoute(route: GeoPoint[], corridorWidthMeters: number): Promise<AiResult<StoreCandidate[]>> {
+  const requestKey = `${corridorWidthMeters}:${route.map((point) => `${point.lat.toFixed(4)},${point.lon.toFixed(4)}`).join(';')}`;
+  const active = activeStoreSearches.get(requestKey);
+  if (active) return active;
+  const request = findSupermarketsNearRouteUncached(route, corridorWidthMeters).finally(() => activeStoreSearches.delete(requestKey));
+  activeStoreSearches.set(requestKey, request);
+  return request;
+}
+
+async function findSupermarketsNearRouteUncached(route: GeoPoint[], corridorWidthMeters: number): Promise<AiResult<StoreCandidate[]>> {
   if (route.length === 0) {
     return { status: 'error', provider: 'local', errorType: 'invalid-response', message: 'No route geometry to search along.' };
   }
@@ -163,9 +183,31 @@ export async function findSupermarketsNearRoute(route: GeoPoint[], corridorWidth
     out center 40;
   `;
   try {
-    const res = await fetch(OVERPASS_URL, { method: 'POST', body: `data=${encodeURIComponent(query)}` });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const json = await res.json();
+    let json: any = null;
+    let lastError = 'No Overpass endpoint responded';
+    for (const endpoint of OVERPASS_URLS) {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 18000);
+          const res = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' }, body: `data=${encodeURIComponent(query)}`, signal: controller.signal });
+          clearTimeout(timer);
+          if (res.status === 429 || res.status === 503) {
+            lastError = `HTTP ${res.status}`;
+            if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 800 + Math.random() * 500));
+            continue;
+          }
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          json = await res.json();
+          break;
+        } catch (error) {
+          lastError = error instanceof Error ? error.message : String(error);
+          break;
+        }
+      }
+      if (json) break;
+    }
+    if (!json) throw new Error(lastError);
     const stores: StoreCandidate[] = (json.elements ?? [])
       .map((el: any) => {
         const lat = el.lat ?? el.center?.lat;

@@ -8,6 +8,7 @@ import { Shirt, Refrigerator, CalendarClock, Settings as SettingsIcon, Sparkles,
 import { AppProvider, useApp } from './context';
 import { BottomNav, ToastContainer, LoadingScreen, Button, Sheet, DemoBadge } from './components';
 import { compareUkBasket } from './prices';
+import { geocode, getTransitWalkingSegments, findSupermarketsNearRoute } from './geo';
 
 const Wardrobe = React.lazy(() => import('./features/Wardrobe'));
 const Fridge = React.lazy(() => import('./features/Fridge'));
@@ -28,14 +29,14 @@ function Shell() {
   const { loading, settings, shoppingItems, updateShoppingItem, updateSettings } = useApp();
   const [area, setArea] = useState<MainArea>('home');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [shoppingRequest, setShoppingRequest] = useState(0);
   const pricesWarmed = useRef(false);
 
   useEffect(() => {
     if (loading || pricesWarmed.current) return;
     pricesWarmed.current = true;
     const pending = shoppingItems.filter((item) => !item.purchased);
-    if (!pending.length) return;
-    compareUkBasket(pending).then(async ({ priceByItem }) => {
+    if (pending.length) compareUkBasket(pending).then(async ({ priceByItem }) => {
       await Promise.all(pending.map((item) => {
         const price = priceByItem[item.id];
         return price === undefined || (item.priceSource === 'verified' && item.estimatedPrice === price)
@@ -43,6 +44,17 @@ function Shell() {
           : updateShoppingItem(item.id, { estimatedPrice: price, priceSource: 'verified' });
       }));
     }).catch(() => { /* Smart Shopping will show a clear price feed error if the source is unavailable. */ });
+    if (settings.googleMapsApiKey.trim()) {
+      void (async () => {
+        const home = await geocode(settings.homeAddress || '69 Yeldham Road, W6 8JQ');
+        const uni = await geocode('Imperial College London');
+        if (home.status !== 'ok' || uni.status !== 'ok' || !home.data[0] || !uni.data[0]) return;
+        const route = await getTransitWalkingSegments(uni.data[0].point, home.data[0].point, settings.googleMapsApiKey.trim());
+        if (route.status === 'ok') {
+          for (const segment of route.data.segments) await findSupermarketsNearRoute(segment, 300);
+        }
+      })().catch(() => { /* Smart Shopping retries if a provider is temporarily unavailable. */ });
+    }
   }, [loading]);
 
   if (loading) return <LoadingScreen />;
@@ -65,10 +77,10 @@ function Shell() {
 
       <main className="flex-1 pt-3">
         <Suspense fallback={<LoadingScreen label="Loading…" />}>
-          {area === 'home' && <Home openPlanner={() => setArea('planner')} />}
+          {area === 'home' && <Home openPlanner={() => { setShoppingRequest((value) => value + 1); setArea('planner'); }} />}
           {area === 'wardrobe' && <Wardrobe />}
           {area === 'fridge' && <Fridge />}
-          {area === 'planner' && <Planner />}
+          {area === 'planner' && <Planner shoppingRequest={shoppingRequest} />}
         </Suspense>
       </main>
 
