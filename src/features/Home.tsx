@@ -13,7 +13,11 @@ export default function Home({ openPlanner }: { openPlanner: () => void }) {
   const today = new Date();
   const dayTasks = useMemo(() => tasks.filter(t => !t.completed && (t.recurrence.freq === 'daily' || (t.dueAt && new Date(t.dueAt).toDateString() === today.toDateString()))), [tasks]);
   const todayEvents = useMemo(() => calendarEvents.filter(e => new Date(e.start).toDateString() === today.toDateString()), [calendarEvents]);
-  const recommendation = useMemo(() => recommendOutfits(garments, { maxResults: 1 })[0], [garments]);
+  const recommendation = useMemo(() => recommendOutfits(garments, {
+    weatherTempC: weather?.current?.temperature_2m,
+    precipitationChance: weather?.current?.precipitation > 0 ? 0.7 : 0.1,
+    maxResults: 1
+  })[0], [garments, weather]);
 
   useEffect(() => {
     let active = true;
@@ -39,17 +43,23 @@ export default function Home({ openPlanner }: { openPlanner: () => void }) {
   const weatherDescription = (code: number) => code === 0 ? 'Clear sky' : code <= 2 ? 'Partly cloudy' : code === 3 ? 'Overcast' : code < 50 ? 'Foggy' : code < 60 ? 'Drizzle' : code < 70 ? 'Rain' : code < 80 ? 'Snow' : 'Showers';
   const weatherIcon = (code: number) => code === 0 ? '☀️' : code <= 2 ? '🌤️' : code === 3 ? '☁️' : code < 70 ? '🌧️' : '🌨️';
 
-  const routeStops = useMemo(() => {
-    const dayTaskStops = dayTasks.map(t => ({ label: t.title, place: t.location || (t.locationTag ? preferences.locationTags[t.locationTag] : '') })).filter(s => s.place);
-    const eventStops = todayEvents.map(e => ({ label: e.title, place: e.location || (e.locationTag ? preferences.locationTags[e.locationTag] : '') })).filter(s => s.place);
-    const seen = new Set<string>();
-    return [...dayTaskStops, ...eventStops].filter(s => { const key = s.place.toLowerCase(); if (seen.has(key)) return false; seen.add(key); return true; });
-  }, [dayTasks, todayEvents, preferences.locationTags]);
-  const destinationPlaces = routeStops.length ? routeStops.map(s => s.place) : [preferences.locationTags.Uni || 'Imperial College London'];
-  const destination = destinationPlaces[destinationPlaces.length - 1];
-  const waypoints = destinationPlaces.slice(0, -1);
-  const routeUrl = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(settings.homeAddress)}&destination=${encodeURIComponent(destination)}${waypoints.length ? `&waypoints=${encodeURIComponent(waypoints.join('|'))}` : ''}&travelmode=transit`;
-  const todoTitles = [...dayTasks.map(t => t.title), ...todayEvents.map(e => e.title)];
+  const uniPlace = preferences.locationTags.Uni || 'Imperial College London';
+  const taskPlace = (task: typeof dayTasks[number]) => task.location || (task.locationTag ? preferences.locationTags[task.locationTag] : '');
+  const eventPlace = (event: typeof todayEvents[number]) => event.location || (event.locationTag ? preferences.locationTags[event.locationTag] : '');
+  const samePlace = (left: string, right: string) => left.trim().toLocaleLowerCase() === right.trim().toLocaleLowerCase();
+  const assignmentTasks = dayTasks.filter(task => task.category === 'coursework');
+  const generalTasks = dayTasks.filter(task => !taskPlace(task) && task.category !== 'coursework');
+  const uniTasks = dayTasks.filter(task => taskPlace(task) && samePlace(taskPlace(task), uniPlace));
+  const uniEvents = todayEvents.filter(event => eventPlace(event) && samePlace(eventPlace(event), uniPlace));
+  const homeTasks = dayTasks.filter(task => /hammersmith|home/i.test(taskPlace(task)));
+  const homeEvents = todayEvents.filter(event => /hammersmith|home/i.test(eventPlace(event)));
+  const otherStops = [
+    ...dayTasks.filter(task => taskPlace(task) && !uniTasks.includes(task) && !homeTasks.includes(task)).map(task => ({ kind: 'task' as const, task, place: taskPlace(task) })),
+    ...todayEvents.filter(event => eventPlace(event) && !uniEvents.includes(event) && !homeEvents.includes(event)).map(event => ({ kind: 'event' as const, event, place: eventPlace(event) }))
+  ];
+  const needsUniCommute = uniTasks.length > 0 || uniEvents.length > 0;
+  const mapsRoute = (origin: string, destination: string) => `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&travelmode=transit`;
+  const taskLabel = (title: string) => /student id/i.test(title) ? 'Student ID pickup' : /medicine.*hammersmith|hammersmith.*pharmacy/i.test(title) ? 'Hammersmith pharmacy' : title;
 
   return <div className="px-4 pb-28 max-w-3xl mx-auto space-y-4">
     <Card className="p-5 bg-white">
@@ -57,8 +67,16 @@ export default function Home({ openPlanner }: { openPlanner: () => void }) {
       <div className="mt-5 flex items-center gap-4"><span className="text-5xl" aria-label="weather">{current ? weatherIcon(current.weather_code) : '🌤️'}</span><div><p className="text-3xl font-semibold">{current ? `${Math.round(current.temperature_2m)}°` : '—'}</p><p className="text-sm text-slate-700">{current ? weatherDescription(current.weather_code) : 'Weather'}</p><p className="text-xs text-slate-500">{weatherError || (current ? `${settings.homeAddress} · ${rainWindow}` : 'Loading local forecast…')}</p></div></div>
       {current && <div className="flex gap-4 mt-4 text-xs text-slate-600"><span className="flex items-center gap-1"><Wind size={14}/> {Math.round(current.wind_speed_10m)} km/h</span><span className="flex items-center gap-1"><Droplets size={14}/> {current.relative_humidity_2m}% humidity</span></div>}
     </Card>
-    <Card className="p-4"><h3 className="font-semibold text-slate-800 mb-3">Today’s to-dos</h3>{todoTitles.length ? <ul className="space-y-2">{todoTitles.map((title, i) => <li key={`${title}-${i}`} className="text-sm flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-indigo-500"/>{title}</li>)}</ul> : <p className="text-sm text-slate-400">Nothing due today. Enjoy the breathing room.</p>}</Card>
-    {recommendation && <Card className="p-4"><div className="flex items-center gap-2 mb-3"><Shirt size={17} className="text-indigo-600"/><h3 className="font-semibold">Recommended outfit</h3></div><div className="flex flex-col items-center gap-1 bg-slate-50 rounded-xl py-4">{recommendation.garments.map(g => <div key={g.id} className="h-12 w-28 rounded-lg overflow-hidden border border-white shadow-sm"><BlobImage blobKey={g.images[0]?.blobKey} url={g.images[0]?.url} alt={g.name} className="w-full h-full"/></div>)}</div><p className="text-xs text-slate-500 mt-2 text-center">{recommendation.garments.map(g => g.name).join(' · ')}</p></Card>}
-    <Card className="p-4 bg-indigo-600 text-white border-0"><div className="flex items-center gap-2"><MapPin size={17}/><h3 className="font-semibold">Today’s route</h3><Badge tone="slate">{routeStops.length} stops</Badge></div><p className="text-sm text-indigo-100 mt-2 mb-3">{routeStops.length ? routeStops.map(t => t.place).join(' · ') : `Home → ${destination}`}</p><a href={routeUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-indigo-700"><Navigation size={15}/> View daily route in Google Maps</a><div className="mt-3"><Button variant="ghost" className="!text-white" onClick={openPlanner}>Plan a shopping stop</Button></div></Card>
+    {recommendation && <Card className="p-4"><div className="flex items-center gap-2 mb-3"><Shirt size={17} className="text-indigo-600"/><h3 className="font-semibold">Today’s outfit</h3></div><div className="grid grid-cols-[1fr_0.8fr] gap-4 items-center"><div className="flex flex-col gap-2">{recommendation.garments.map(g => <div key={g.id} className="flex flex-col items-center rounded-xl bg-slate-50 p-2"><div className="h-24 w-full"><BlobImage blobKey={g.images[0]?.blobKey} url={g.images[0]?.url} alt={g.name} className="h-full w-full object-contain"/></div><span className="mt-1 text-[11px] text-slate-500">{g.name}</span></div>)}</div><div className="space-y-2"><p className="text-sm font-semibold text-slate-800">{recommendation.totalScore} outfit score</p><div className="rounded-xl bg-indigo-50 p-3"><p className="text-xs text-slate-500">Colour harmony</p><p className="text-xl font-semibold text-indigo-700">{recommendation.metrics.colorHarmony}%</p></div><div className="rounded-xl bg-sky-50 p-3"><p className="text-xs text-slate-500">Warmth</p><p className="text-xl font-semibold text-sky-700">{recommendation.metrics.estimatedWarmth}/10</p></div><div className="rounded-xl bg-amber-50 p-3"><p className="text-xs text-slate-500">Formality</p><p className="text-xl font-semibold text-amber-700">{recommendation.metrics.formality}/10</p></div></div></div></Card>}
+    <Card className="p-4"><div className="flex items-center justify-between mb-3"><div className="flex items-center gap-2"><MapPin size={17} className="text-indigo-600"/><h3 className="font-semibold text-slate-800">Today’s agenda</h3></div><Badge tone="indigo">{dayTasks.length + todayEvents.length} items</Badge></div><div className="space-y-3">
+      {assignmentTasks.map(task => <div key={task.id} className="flex gap-3 rounded-xl bg-amber-50 p-3"><span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-amber-500"/><div><p className="text-xs font-semibold uppercase tracking-wide text-amber-800">Assignment due today</p><p className="text-sm font-medium text-slate-800">{task.title}</p></div></div>)}
+      {generalTasks.map(task => <div key={task.id} className="flex gap-3 rounded-xl bg-slate-50 p-3"><span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-indigo-500"/><p className="text-sm text-slate-700">{task.title}</p></div>)}
+      {needsUniCommute && <div className="rounded-xl border border-indigo-100 p-3"><div className="flex items-center justify-between gap-2"><div><p className="text-xs font-semibold uppercase tracking-wide text-indigo-600">Commute to uni</p><p className="text-sm text-slate-700">Home → {uniPlace}</p></div><a aria-label="Commute to university in Google Maps by public transport" href={mapsRoute(settings.homeAddress, uniPlace)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-medium text-white"><Navigation size={14}/> Google Maps · Transit</a></div></div>}
+      {(uniTasks.length > 0 || uniEvents.length > 0) && <div className="rounded-xl bg-indigo-50 p-3"><p className="text-xs font-semibold uppercase tracking-wide text-indigo-700 mb-1">{uniPlace}</p>{uniTasks.map(task => <p key={task.id} className="text-sm text-slate-700">{taskLabel(task.title)}</p>)}{uniEvents.map(event => <p key={event.id} className="text-sm text-slate-700">{event.title}</p>)}</div>}
+      {needsUniCommute && <div className="rounded-xl border border-indigo-100 p-3"><div className="flex items-center justify-between gap-2"><div><p className="text-xs font-semibold uppercase tracking-wide text-indigo-600">Commute from uni to home</p><p className="text-sm text-slate-700">{uniPlace} → Home</p></div><a aria-label="Commute home in Google Maps by public transport" href={mapsRoute(uniPlace, settings.homeAddress)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-medium text-white"><Navigation size={14}/> Google Maps · Transit</a></div></div>}
+      {(homeTasks.length > 0 || homeEvents.length > 0) && <div className="rounded-xl bg-emerald-50 p-3"><p className="text-xs font-semibold uppercase tracking-wide text-emerald-700 mb-1">Near home</p>{homeTasks.map(task => <a key={task.id} href={mapsRoute(settings.homeAddress, taskPlace(task))} target="_blank" rel="noreferrer" className="flex items-center justify-between py-1 text-sm text-slate-700"><span>{taskLabel(task.title)}</span><MapPin size={14} className="text-emerald-700"/></a>)}{homeEvents.map(event => <p key={event.id} className="text-sm text-slate-700">{event.title}</p>)}</div>}
+      {otherStops.map((stop, index) => <div key={`${stop.place}-${index}`} className="rounded-xl bg-slate-50 p-3"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{stop.place}</p><p className="text-sm text-slate-700">{stop.kind === 'task' ? taskLabel(stop.task.title) : stop.event.title}</p><a href={mapsRoute(settings.homeAddress, stop.place)} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-xs text-indigo-600"><Navigation size={12}/> Google Maps</a></div>)}
+      {!dayTasks.length && !todayEvents.length && <p className="text-sm text-slate-400">Nothing scheduled today.</p>}
+    </div><Button variant="outline" className="mt-4 w-full" onClick={openPlanner}>Plan a shopping stop</Button></Card>
   </div>;
 }

@@ -252,6 +252,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         await kvSet('requested-tasks-v1', true);
       }
 
+      if (!(await kvGet<boolean>('today-agenda-tasks-v1'))) {
+        const today = new Date();
+        today.setHours(9, 0, 0, 0);
+        for (const task of await tasksStore.all()) {
+          if (/^buy groceries for the week$/i.test(task.title.trim()) || /^get groceries from campus supermarket$/i.test(task.title.trim())) await tasksStore.remove(task.id);
+          else if (/^submit calculus problem set$/i.test(task.title.trim()) && !task.completed) await tasksStore.put({ ...task, dueAt: today.toISOString(), updatedAt: nowIso() });
+        }
+        await kvSet('today-agenda-tasks-v1', true);
+      }
+
       const todayDate = new Date();
       for (const task of await tasksStore.all()) {
         if (task.recurrence.freq !== 'daily' || !task.dueAt || new Date(task.dueAt).toDateString() === todayDate.toDateString()) continue;

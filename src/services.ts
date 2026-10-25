@@ -514,7 +514,7 @@ export interface TaskGroup {
   relatedEvents: CalendarEvent[];
 }
 
-export function groupTasks(tasks: Task[], events: CalendarEvent[]): TaskGroup[] {
+export function groupTasks(tasks: Task[], events: CalendarEvent[], locationTags: Record<string, string> = {}): TaskGroup[] {
   const groups = new Map<string, TaskGroup>();
 
   const addTo = (key: string, label: string, task: Task, related: CalendarEvent[] = []) => {
@@ -526,21 +526,35 @@ export function groupTasks(tasks: Task[], events: CalendarEvent[]): TaskGroup[] 
     groups.set(key, g);
   };
 
+  const locations = new Map<string, { label: string; tasks: Task[]; events: CalendarEvent[] }>();
+  const categories = new Map<string, Task[]>();
+  const keyForPlace = (place: string) => place.trim().toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ');
+  const eventPlace = (event: CalendarEvent) => event.location || (event.locationTag ? locationTags[event.locationTag] : undefined);
   for (const task of tasks) {
     if (task.completed) continue;
-    if (task.location) {
-      const related = events.filter((e) => e.location && e.location.toLowerCase() === task.location!.toLowerCase());
-      addTo(`loc:${task.location.toLowerCase()}`, task.location, task, related);
-      continue;
+    const linked = task.linkedCalendarEventId ? events.find((event) => event.id === task.linkedCalendarEventId) : undefined;
+    const place = task.location || (task.locationTag ? locationTags[task.locationTag] : undefined) || (linked ? eventPlace(linked) : undefined);
+    if (place?.trim()) {
+      const key = keyForPlace(place);
+      const bucket = locations.get(key) ?? { label: place, tasks: [], events: [] };
+      bucket.tasks.push(task);
+      if (linked && !bucket.events.some((event) => event.id === linked.id)) bucket.events.push(linked);
+      events.filter((event) => eventPlace(event) && keyForPlace(eventPlace(event)!) === key).forEach((event) => {
+        if (!bucket.events.some((existing) => existing.id === event.id)) bucket.events.push(event);
+      });
+      locations.set(key, bucket);
+    } else {
+      const bucket = categories.get(task.category) ?? [];
+      bucket.push(task);
+      categories.set(task.category, bucket);
     }
-    if (task.linkedCalendarEventId) {
-      const ev = events.find((e) => e.id === task.linkedCalendarEventId);
-      if (ev) {
-        addTo(`loc:${(ev.location ?? ev.title).toLowerCase()}`, ev.location ?? ev.title, task, [ev]);
-        continue;
-      }
-    }
-    addTo(`cat:${task.category}`, task.category.charAt(0).toUpperCase() + task.category.slice(1), task);
+  }
+  for (const [category, group] of categories) {
+    const title = category.charAt(0).toUpperCase() + category.slice(1);
+    group.forEach((task) => addTo(`cat:${category}`, title, task));
+  }
+  for (const [key, bucket] of locations) {
+    if (bucket.tasks.length > 1) bucket.tasks.forEach((task) => addTo(`loc:${key}`, bucket.label, task, bucket.events));
   }
 
   return Array.from(groups.values()).sort((a, b) => b.tasks.length - a.tasks.length);

@@ -462,9 +462,9 @@ function TaskEditorSheet({ value, onClose }: { value: Task | null; onClose: () =
 // =============================== TASK GROUPING + SMART SHOPPING =========================================
 
 function GroupingTab() {
-  const { tasks, calendarEvents } = useApp();
+  const { tasks, calendarEvents, preferences } = useApp();
   const [smartShoppingOpen, setSmartShoppingOpen] = useState(false);
-  const groups = useMemo(() => groupTasks(tasks, calendarEvents), [tasks, calendarEvents]);
+  const groups = useMemo(() => groupTasks(tasks, calendarEvents, preferences.locationTags), [tasks, calendarEvents, preferences.locationTags]);
 
   return (
     <div className="px-4 pb-10">
