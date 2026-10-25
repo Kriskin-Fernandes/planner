@@ -5,6 +5,26 @@ import { aiCacheGet, aiCacheSet } from './db';
 const PRICE_DATA_URL = 'https://api.apify.com/v2/datasets/ynAT9NPps2EdjMOJa/items?format=json&limit=1000';
 const CACHE_KEY = 'uk-grocery-price-snapshot-v1';
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const WAITROSE_SNAPSHOT_DATE = '2026-10-25T00:00:00.000Z';
+const WAITROSE_ROWS: GroceryPriceRow[] = [
+  { retailer: 'Waitrose', name: 'Essential British Free Range Semi-Skimmed Milk 4 Pints 2.272litre', price: 1.75, packSize: '2.272l', scrapedAt: WAITROSE_SNAPSHOT_DATE, url: 'https://www.waitrose.com/ecom/shop/browse/groceries/fresh_and_chilled/milk_butter_and_eggs' },
+  { retailer: 'Waitrose', name: 'Essential British Free Range Semi-Skimmed Milk 2 Pints 1.136litre', price: 1.25, packSize: '1.136l', scrapedAt: WAITROSE_SNAPSHOT_DATE, url: 'https://www.waitrose.com/ecom/shop/browse/groceries/fresh_and_chilled/milk_butter_and_eggs' },
+  { retailer: 'Waitrose', name: 'Essential Free Range White Eggs 6s', price: 1.40, packSize: '6 pcs', scrapedAt: WAITROSE_SNAPSHOT_DATE, url: 'https://www.waitrose.com/ecom/shop/browse/groceries/fresh_and_chilled/milk_butter_and_eggs' },
+  { retailer: 'Waitrose', name: 'Essential Free Range Double Cream 300ml', price: 1.80, packSize: '300ml', scrapedAt: WAITROSE_SNAPSHOT_DATE, url: 'https://www.waitrose.com/ecom/shop/browse/groceries/fresh_and_chilled/milk_butter_and_eggs' },
+  { retailer: 'Waitrose', name: 'Essential Salted Butter 250g', price: 2.00, packSize: '250g', scrapedAt: WAITROSE_SNAPSHOT_DATE, url: 'https://www.waitrose.com/ecom/shop/browse/groceries' },
+  { retailer: 'Waitrose', name: 'Essential Basmati Rice 1kg', price: 1.80, packSize: '1kg', scrapedAt: WAITROSE_SNAPSHOT_DATE, url: 'https://www.waitrose.com/ecom/shop/browse/groceries/food_cupboard/rice_pasta_and_pulses' },
+  { retailer: 'Waitrose', name: 'Essential Penne 1kg', price: 1.40, packSize: '1kg', scrapedAt: WAITROSE_SNAPSHOT_DATE, url: 'https://www.waitrose.com/ecom/shop/browse/groceries/new_lower_price/food_cupboard/rice_pasta_and_sauces' },
+  { retailer: 'Waitrose', name: 'Essential Spaghetti 500g', price: 0.70, packSize: '500g', scrapedAt: WAITROSE_SNAPSHOT_DATE, url: 'https://www.waitrose.com/ecom/shop/browse/groceries/food_cupboard/rice_pasta_and_pulses' },
+  { retailer: 'Waitrose', name: 'Essential Porridge Oats 1kg', price: 1.00, packSize: '1kg', scrapedAt: WAITROSE_SNAPSHOT_DATE, url: 'https://www.waitrose.com/ecom/shop/browse/groceries/waitrose_brands/essential_waitrose_and_partners/food_cupboard/breakfast_cereals' },
+  { retailer: 'Waitrose', name: 'Waitrose Super Soft White Medium Sliced Bread 800g', price: 0.80, packSize: '800g', scrapedAt: WAITROSE_SNAPSHOT_DATE, url: 'https://www.waitrose.com/ecom/shop/browse/groceries/new_lower_price' },
+  { retailer: 'Waitrose', name: 'Essential British Large Potatoes 4s', price: 0.85, packSize: '4 pcs', scrapedAt: WAITROSE_SNAPSHOT_DATE, url: 'https://www.waitrose.com/ecom/shop/browse/groceries' },
+  { retailer: 'Waitrose', name: 'Waitrose Classic Vine Tomatoes 450g', price: 1.50, packSize: '450g', scrapedAt: WAITROSE_SNAPSHOT_DATE, url: 'https://www.waitrose.com/ecom/shop/browse/groceries/fresh_and_chilled/fresh_salad_and_herbs' },
+  { retailer: 'Waitrose', name: 'Waitrose Baby Spinach 120g', price: 1.10, packSize: '120g', scrapedAt: WAITROSE_SNAPSHOT_DATE, url: 'https://www.waitrose.com/ecom/shop/browse/groceries/fresh_and_chilled/fresh_salad_and_herbs' },
+  { retailer: 'Waitrose', name: 'Essential British Carrots 1kg', price: 0.75, packSize: '1kg', scrapedAt: WAITROSE_SNAPSHOT_DATE, url: 'https://www.waitrose.com/ecom/shop/browse/groceries/fresh_and_chilled' },
+  { retailer: 'Waitrose', name: 'Essential Fairtrade Bananas 5s', price: 0.95, packSize: '5 pcs', scrapedAt: WAITROSE_SNAPSHOT_DATE, url: 'https://www.waitrose.com/ecom/shop/browse/groceries/fresh_and_chilled' },
+  { retailer: 'Waitrose', name: 'Waitrose Royal Gala Apples 6s', price: 1.80, packSize: '6 pcs', scrapedAt: WAITROSE_SNAPSHOT_DATE, url: 'https://www.waitrose.com/ecom/shop/browse/groceries/fresh_and_chilled/fresh_fruit/apples' },
+  { retailer: 'Waitrose', name: 'Waitrose Slower Reared Chicken Breast Fillets 600g', price: 5.75, packSize: '600g', scrapedAt: WAITROSE_SNAPSHOT_DATE, url: 'https://www.waitrose.com/ecom/shop/browse/groceries/fresh_and_chilled/fresh_chicken_and_poultry' }
+];
 
 export interface GroceryPriceRow {
   retailer: string;
@@ -26,16 +46,21 @@ export interface BasketRetailerTotal {
 
 async function loadSnapshot(): Promise<GroceryPriceRow[]> {
   const cached = await aiCacheGet<{ savedAt: number; rows: GroceryPriceRow[] }>(CACHE_KEY);
-  if (cached && Date.now() - cached.savedAt < CACHE_TTL_MS) return cached.rows;
-  const response = await fetch(PRICE_DATA_URL, { headers: { Accept: 'application/json' } });
-  if (!response.ok) throw new Error(`Grocery price feed returned HTTP ${response.status}`);
-  const json = await response.json();
-  const rows = (Array.isArray(json) ? json : json.items ?? []).filter((row: any) =>
-    row && typeof row.retailer === 'string' && typeof row.name === 'string' && Number.isFinite(Number(row.price)) && Number(row.price) > 0
-  ) as GroceryPriceRow[];
-  if (!rows.length) throw new Error('No grocery prices were returned by the public daily feed.');
-  await aiCacheSet(CACHE_KEY, { savedAt: Date.now(), rows });
-  return rows;
+  if (cached && Date.now() - cached.savedAt < CACHE_TTL_MS) return [...cached.rows, ...WAITROSE_ROWS];
+  try {
+    const response = await fetch(PRICE_DATA_URL, { headers: { Accept: 'application/json' } });
+    if (!response.ok) throw new Error(`Grocery price feed returned HTTP ${response.status}`);
+    const json = await response.json();
+    const rows = (Array.isArray(json) ? json : json.items ?? []).filter((row: any) =>
+      row && typeof row.retailer === 'string' && typeof row.name === 'string' && Number.isFinite(Number(row.price)) && Number(row.price) > 0
+    ) as GroceryPriceRow[];
+    if (!rows.length) throw new Error('No grocery prices were returned by the public daily feed.');
+    await aiCacheSet(CACHE_KEY, { savedAt: Date.now(), rows });
+    return [...rows, ...WAITROSE_ROWS];
+  } catch (error) {
+    if (WAITROSE_ROWS.length) return WAITROSE_ROWS;
+    throw error;
+  }
 }
 
 function itemTerms(name: string): string[] {
