@@ -15,7 +15,7 @@ import {
   TextArea, Select, Toggle, useConfirm, Spinner
 } from '../components';
 import { TASK_PRIORITY_LABELS, TASK_PRIORITY_COLORS } from '../data';
-import type { CalendarEvent, Task, TaskPriority, Recurrence, ShoppingItem, StoreCandidate, GeoPoint } from '../types';
+import type { CalendarEvent, Task, TaskPriority, Recurrence, ShoppingItem, StoreCandidate, GeoPoint, TravelMode } from '../types';
 import { newId, nowIso } from '../types';
 import { formatDate, formatDateTime, formatRelativeDays, daysUntil } from '../lib';
 import { detectClashes, expandEventOccurrences, eventsToIcs, icsToEvents, groupTasks, filterStoresNearRoute } from '../services';
@@ -554,6 +554,7 @@ function allocateByBestPrice(items: ShoppingItem[], stores: StoreCandidate[], to
 
 const retailerKey = (name: string) => name.toLocaleLowerCase().replace(/[^a-z0-9]/g, '');
 const isMainstreamStore = (name: string) => /tesco|asda|sainsbur|waitrose|aldi|lidl|morrisons|iceland|co-?op/i.test(name);
+const loyaltyProgram = (name: string) => /tesco/i.test(name) ? 'Clubcard' : /sainsbur/i.test(name) ? 'Nectar' : /morrisons/i.test(name) ? 'More Card' : /waitrose/i.test(name) ? 'myWaitrose' : /asda/i.test(name) ? 'Rewards' : 'member price';
 function storePriceRow(store: StoreCandidate, totals: BasketRetailerTotal[]) {
   const name = retailerKey(store.name);
   return totals.find((row) => {
@@ -570,9 +571,10 @@ const pinIcon = (color: string) =>
   });
 
 function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
-  const { shoppingItems, updateShoppingItem, deleteShoppingItem, addShoppingItem, settings, preferences, pushToast } = useApp();
-  const [startQuery, setStartQuery] = useState(settings.homeAddress || '69 Yeldham Road, W6 8JQ');
-  const [destQuery, setDestQuery] = useState(preferences.locationTags.Uni || 'Imperial College London');
+  const { shoppingItems, updateShoppingItem, deleteShoppingItem, addShoppingItem, settings, preferences, updatePreferences, pushToast } = useApp();
+  const [startQuery, setStartQuery] = useState(preferences.locationTags.Uni || 'Imperial College London');
+  const [destQuery, setDestQuery] = useState(settings.homeAddress || '69 Yeldham Road, W6 8JQ');
+  const [travelMode, setTravelMode] = useState<TravelMode>(preferences.defaultTravelMode);
   const [deadline, setDeadline] = useState('');
   const [corridor, setCorridor] = useState(300);
   const [stage, setStage] = useState<'form' | 'loading' | 'results'>('form');
@@ -582,6 +584,7 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
   const [routeGeometry, setRouteGeometry] = useState<GeoPoint[][]>([]);
   const [routeDistanceM, setRouteDistanceM] = useState(0);
   const [stores, setStores] = useState<StoreCandidate[]>([]);
+  const [unpricedStores, setUnpricedStores] = useState<StoreCandidate[]>([]);
   const [nearbyAlternatives, setNearbyAlternatives] = useState<StoreCandidate[]>([]);
   const [allocation, setAllocation] = useState<Record<string, string[]>>({});
   const [plannedItems, setPlannedItems] = useState<ShoppingItem[]>([]);
@@ -605,36 +608,37 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
   }
 
   async function runPlan() {
-    if (!settings.googleMapsApiKey.trim()) { pushToast('Add a Google Maps Routes API key in Settings to find shops along actual walking sections.', 'error'); return; }
-    if (!startQuery.trim() || !destQuery.trim()) { pushToast('Enter your home and university locations', 'error'); return; }
+    if (!settings.googleMapsApiKey.trim()) { pushToast('Add a Google Maps Routes API key in Settings to plan routes and find nearby shops.', 'error'); return; }
+    if (!startQuery.trim() || !destQuery.trim()) { pushToast('Enter a route start and destination', 'error'); return; }
     const baseItems = pendingItems.filter((item) => selectedItemIds.has(item.id));
     if (!baseItems.length) { pushToast('Select at least one shopping item', 'info'); return; }
     setStage('loading');
     setPriceMessage('');
     setStores([]);
+    setUnpricedStores([]);
     setNearbyAlternatives([]);
-    setStatusMsg('Reading Google Maps walking sections on the route back from uni…');
-    const homePt = await geocodeOne(startQuery, 'home');
-    if (!homePt) { setStage('form'); return; }
-    const uniPt = await geocodeOne(destQuery, 'university');
-    if (!uniPt) { setStage('form'); return; }
-    const transitWalk = await getTransitWalkingSegments(uniPt, homePt, settings.googleMapsApiKey.trim());
-    if (transitWalk.status !== 'ok') { pushToast(transitWalk.message, 'error'); setStage('form'); return; }
-    setStart(uniPt);
-    setDestination(homePt);
-    setRouteGeometry(transitWalk.data.segments);
-    setRouteDistanceM(transitWalk.data.walkingDistanceMeters);
+    setStatusMsg(`Reading Google Maps ${travelMode === 'public-transport' ? 'public transport and walking sections' : travelMode} route…`);
+    const originPt = await geocodeOne(startQuery, 'route start');
+    if (!originPt) { setStage('form'); return; }
+    const destinationPt = await geocodeOne(destQuery, 'route destination');
+    if (!destinationPt) { setStage('form'); return; }
+    const googleRoute = await getTransitWalkingSegments(originPt, destinationPt, settings.googleMapsApiKey.trim(), travelMode);
+    if (googleRoute.status !== 'ok') { pushToast(googleRoute.message, 'error'); setStage('form'); return; }
+    setStart(originPt);
+    setDestination(destinationPt);
+    setRouteGeometry(googleRoute.data.segments);
+    setRouteDistanceM(googleRoute.data.routeDistanceMeters);
 
-    setStatusMsg('Finding shops within walking distance of the return-route walking sections…');
+    setStatusMsg(`Finding grocery stores within ${corridor}m of the selected route…`);
     const segmentResults: Awaited<ReturnType<typeof findSupermarketsNearRoute>>[] = [];
-    for (const segment of transitWalk.data.segments) segmentResults.push(await findSupermarketsNearRoute(segment, corridor, settings.googleMapsApiKey.trim()));
+    for (const segment of googleRoute.data.segments) segmentResults.push(await findSupermarketsNearRoute(segment, corridor, settings.googleMapsApiKey.trim()));
     const routeError = segmentResults.find((result) => result.status !== 'ok');
     if (routeError?.status === 'error') { pushToast(routeError.message, 'error'); setStage('form'); return; }
     const candidateMap = new Map<string, StoreCandidate>();
     for (let i = 0; i < segmentResults.length; i++) {
       const result = segmentResults[i];
       if (result.status !== 'ok') continue;
-      for (const store of filterStoresNearRoute(result.data, transitWalk.data.segments[i], corridor)) {
+      for (const store of filterStoresNearRoute(result.data, googleRoute.data.segments[i], corridor)) {
         const previous = candidateMap.get(store.id);
         if (!previous || store.distanceFromRouteMeters < previous.distanceFromRouteMeters) candidateMap.set(store.id, store);
       }
@@ -684,7 +688,9 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
       const completeWalkingStores = oneBranchPerChain.filter((store) => targetChains.includes(retailerKey(storePriceRow(store, routeTotals)?.retailer ?? '')));
       const selectedTotals = routeTotals.filter((row) => targetChains.includes(retailerKey(row.retailer)));
       setStores(completeWalkingStores);
-      setNearbyAlternatives(!savingsFound ? nearWalkingRoute.filter((store) => !storePriceRow(store, completeBaskets) && !isMainstreamStore(store.name)).slice(0, 12) : []);
+      const storesWithoutPrices = nearWalkingRoute.filter((store) => !storePriceRow(store, comparison.totals));
+      setUnpricedStores(storesWithoutPrices);
+      setNearbyAlternatives(!savingsFound ? storesWithoutPrices.filter((store) => !isMainstreamStore(store.name)).slice(0, 12) : []);
       setAllocation(allocateByBestPrice(itemsToAllocate, completeWalkingStores, selectedTotals, savingsFound));
       setPriceTotals(selectedTotals);
       setPriceDate(comparison.latestAt);
@@ -743,12 +749,21 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
       {stage === 'form' && (
         <div>
           <div className="grid grid-cols-1 gap-3">
-            <Field label="Home"><TextInput value={startQuery} onChange={(e) => setStartQuery(e.target.value)} placeholder="Home address" /></Field>
-            <Field label="University"><TextInput value={destQuery} onChange={(e) => setDestQuery(e.target.value)} placeholder="Imperial College London" /></Field>
+            <Field label="Route start"><TextInput value={startQuery} onChange={(e) => setStartQuery(e.target.value)} placeholder="Imperial College London" /></Field>
+            <Field label="Route destination"><TextInput value={destQuery} onChange={(e) => setDestQuery(e.target.value)} placeholder="Home address" /></Field>
+            <Field label="Method of transport">
+              <Select value={travelMode} onChange={(e) => { const mode = e.target.value as TravelMode; setTravelMode(mode); void updatePreferences({ defaultTravelMode: mode }); }}>
+                <option value="public-transport">Public transport (Google Maps)</option>
+                <option value="walking">Walking</option>
+                <option value="cycling">Cycling</option>
+                <option value="driving">Driving</option>
+              </Select>
+            </Field>
           </div>
-          <p className="my-3 rounded-xl bg-indigo-50 p-3 text-xs text-indigo-900">Smart Shop checks the trip from university back home and searches only within {corridor} m of Google Maps walking sections. Shops must have prices for every selected item.</p>
+          {(travelMode === 'walking' || travelMode === 'cycling') && <p className="-mt-1 text-[11px] text-amber-700">Google walking and cycling route coverage can vary by area.</p>}
+          <p className="my-3 rounded-xl bg-indigo-50 p-3 text-xs text-indigo-900">Smart Shop uses the Google Maps {travelMode === 'public-transport' ? 'transit route and its walking sections' : `${travelMode} route`} from your start to your destination, then searches for stores within {corridor}m. Priced store plans must match every selected item.</p>
           <div className="grid grid-cols-2 gap-3">
-            <Field label={`Walking distance: ${corridor}m`} hint="Maximum distance from a walking segment.">
+            <Field label={`Shop distance from route: ${corridor}m`} hint="Maximum distance from the selected route geometry.">
               <input type="range" min={100} max={500} step={50} value={corridor} onChange={(e) => setCorridor(Number(e.target.value))} className="w-full" />
             </Field>
             <Field label="Shopping deadline (optional)"><TextInput type="datetime-local" value={deadline} onChange={(e) => setDeadline(e.target.value)} /></Field>
@@ -766,7 +781,7 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
               ))}
             </div>
           )}
-          <p className="text-xs text-slate-400 mb-3">Store prices are checked against the selected basket; nearby branches are discovered from Google Places and filtered against Google Maps walking legs.</p>
+          <p className="text-xs text-slate-400 mb-3">Store prices are checked against the selected basket; nearby branches are discovered from Google Places along your chosen route.</p>
           <Button onClick={runPlan} disabled={pendingItems.length === 0}><Wand2 size={16} /> Find shops on this route</Button>
         </div>
       )}
@@ -780,14 +795,14 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
 
       {stage === 'results' && (
         <div>
-            <Button variant="outline" className="mb-3" onClick={() => setStage('form')}>Change start or destination</Button>
+            <Button variant="outline" className="mb-3" onClick={() => setStage('form')}>Change route or transport</Button>
             <div className="flex flex-wrap gap-2 mb-3">
-              {(['transit', 'walking', 'bicycling', 'driving'] as const).map((mode) => <a key={mode} className="px-3 py-2 rounded-xl bg-indigo-50 text-indigo-700 text-xs font-medium" target="_blank" rel="noreferrer" href={`https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(destQuery)}&destination=${encodeURIComponent(startQuery)}&travelmode=${mode}`}>{mode === 'transit' ? 'Google Maps · Transit home' : `Google Maps · ${mode}`}</a>)}
+              {(['transit', 'walking', 'bicycling', 'driving'] as const).map((mode) => <a key={mode} className="px-3 py-2 rounded-xl bg-indigo-50 text-indigo-700 text-xs font-medium" target="_blank" rel="noreferrer" href={`https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(startQuery)}&destination=${encodeURIComponent(destQuery)}&travelmode=${mode}`}>{mode === 'transit' ? 'Google Maps · Transit' : `Google Maps · ${mode}`}</a>)}
             </div>
-            <p className="text-xs text-slate-500 mb-3">The map shows only the walking steps of the Google Maps transit trip back from uni. Stores are shown only when the full selected basket is priced.</p>
+            <p className="text-xs text-slate-500 mb-3">The map follows your Google Maps {travelMode === 'public-transport' ? 'transit route’s walking sections' : `${travelMode} route`}. Stores with full basket prices are shown in colour; stores without price data appear as grey dots.</p>
           <Card className="p-4 mb-3 bg-emerald-50 border-emerald-100">
             <div className="flex items-center justify-between gap-2"><div><h3 className="font-semibold text-emerald-950">Supermarket price comparison</h3><p className="text-[11px] text-emerald-800">UK online shelf prices · latest listing {priceDate ? new Date(priceDate).toLocaleDateString() : 'available'} · matched products only</p></div><Badge tone="green">£ GBP</Badge></div>
-            {priceTotals.length ? <div className="mt-3 space-y-2"><p className="text-xs font-semibold text-emerald-950">Store subtotals · matched items</p>{priceTotals.map((row) => <div key={row.retailer} className="flex items-center justify-between text-sm"><span className="capitalize font-medium text-slate-700">{row.retailer}</span><span className="text-slate-900">£{row.total.toFixed(2)} <span className="text-[11px] text-slate-500">({row.matched}/{row.totalItems} matched)</span></span></div>)}{savingsComparison && savingsComparison.saved >= 0.01 ? <div className="rounded-lg bg-white/70 p-2 text-xs font-semibold text-emerald-900">Two-store split across {savingsComparison.chains.join(' + ')}: £{savingsComparison.splitTotal.toFixed(2)} vs {savingsComparison.cheaper} at £{savingsComparison.cheaperTotal.toFixed(2)} · save £{savingsComparison.saved.toFixed(2)} after comparing each item. This split is only shown because it is cheaper.</div> : <div className="rounded-lg bg-amber-50 p-2 text-xs font-medium text-amber-900">{priceMessage || 'No cheaper split found; keep the whole basket at the lowest priced chain.'}</div>}{catalogueItems.length > 0 && <div className="rounded-lg bg-white/70 p-2 text-xs text-emerald-900"><span className="font-semibold">Expanded with comparable groceries:</span> {catalogueItems.map((item) => item.name).join(', ')}. These will be added to your shopping list when you confirm.</div>}<div className="flex justify-between text-xs text-emerald-900"><span>Service charge (in-store collection)</span><span>£0.00</span></div><p className="text-[10px] text-emerald-900 mt-2">Price data combines the <a className="underline" href="https://apify.com/yappman/uk-supermarket-price-scraper" target="_blank" rel="noreferrer">Yappman supermarket feed</a> with product listings from <a className="underline" href="https://www.waitrose.com/ecom/shop/browse/groceries" target="_blank" rel="noreferrer">Waitrose online</a>. Independent nearby shops are shown as route options when item-level prices are unavailable.</p></div> : <p className="text-xs text-emerald-900 mt-3">{priceMessage || 'No matching products in the price sources.'}</p>}
+            {priceTotals.length ? <div className="mt-3 space-y-2"><p className="text-xs font-semibold text-emerald-950">Store subtotals · member prices applied where available</p>{priceTotals.map((row) => <div key={row.retailer} className="flex items-center justify-between text-sm"><span className="capitalize font-medium text-slate-700">{row.retailer}{row.loyaltySavings > 0 ? <span className="ml-1 text-[10px] text-emerald-700">· {loyaltyProgram(row.retailer)} saves £{row.loyaltySavings.toFixed(2)}</span> : null}</span><span className="text-slate-900">£{row.total.toFixed(2)}{row.loyaltySavings > 0 ? <span className="ml-1 text-[10px] text-slate-500">(shelf £{row.shelfTotal.toFixed(2)})</span> : null} <span className="text-[11px] text-slate-500">({row.matched}/{row.totalItems} matched)</span></span></div>)}{savingsComparison && savingsComparison.saved >= 0.01 ? <div className="rounded-lg bg-white/70 p-2 text-xs font-semibold text-emerald-900">Two-store split across {savingsComparison.chains.join(' + ')}: £{savingsComparison.splitTotal.toFixed(2)} vs {savingsComparison.cheaper} at £{savingsComparison.cheaperTotal.toFixed(2)} · save £{savingsComparison.saved.toFixed(2)} after applying available loyalty prices. This split is only shown because it is cheaper.</div> : <div className="rounded-lg bg-amber-50 p-2 text-xs font-medium text-amber-900">{priceMessage || 'No cheaper split found; keep the whole basket at the lowest priced chain.'}</div>}{catalogueItems.length > 0 && <div className="rounded-lg bg-white/70 p-2 text-xs text-emerald-900"><span className="font-semibold">Expanded with comparable groceries:</span> {catalogueItems.map((item) => item.name).join(', ')}. These will be added to your shopping list when you confirm.</div>}<div className="flex justify-between text-xs text-emerald-900"><span>Service charge (in-store collection)</span><span>£0.00</span></div><p className="text-[10px] text-emerald-900 mt-2">Price data combines the <a className="underline" href="https://apify.com/yappman/uk-supermarket-price-scraper" target="_blank" rel="noreferrer">Yappman supermarket feed</a> with product listings from <a className="underline" href="https://www.waitrose.com/ecom/shop/browse/groceries" target="_blank" rel="noreferrer">Waitrose online</a>. Clubcard and Nectar prices are applied when supplied by the price feed. Independent nearby shops are shown as route options when item-level prices are unavailable.</p></div> : <p className="text-xs text-emerald-900 mt-3">{priceMessage || 'No matching products in the price sources.'}</p>}
           </Card>
           <div className="h-64 rounded-xl overflow-hidden mb-3 border border-slate-200">
             <MapContainer center={center} zoom={13} style={{ height: '100%', width: '100%' }} scrollWheelZoom={false}>
@@ -795,6 +810,7 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
               {routeGeometry.map((segment, index) => <Polyline key={index} positions={segment.map((p) => [p.lat, p.lon])} pathOptions={{ color: '#4f46e5', weight: 4 }} />)}
               {start && <Marker position={[start.lat, start.lon]} icon={pinIcon('#16a34a')}><Popup>Start</Popup></Marker>}
               {destination && <Marker position={[destination.lat, destination.lon]} icon={pinIcon('#dc2626')}><Popup>Destination</Popup></Marker>}
+              {unpricedStores.filter((s) => !stores.some((priced) => priced.id === s.id)).map((s) => <Marker key={`unpriced-${s.id}`} position={[s.point.lat, s.point.lon]} icon={storeIcon('#94a3b8')}><Popup>{s.name}<br />Price data unavailable<br />{Math.round(s.distanceFromRouteMeters)}m from route</Popup></Marker>)}
               {stores.map((s) => (
                 <Marker key={s.id} position={[s.point.lat, s.point.lon]} icon={storeIcon((allocation[s.id] ?? []).length ? '#ea580c' : '#4f46e5')}>
                   <Popup>{s.name}<br />{Math.round(s.distanceFromRouteMeters)}m from route</Popup>
@@ -802,13 +818,13 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
               ))}
             </MapContainer>
           </div>
-          <div className="flex items-center gap-4 text-[11px] text-slate-500 mb-3"><span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-orange-600" /> Selected shopping stop</span><span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-indigo-600" /> Other matched store</span></div>
-          <p className="text-[11px] text-slate-400 mb-3">Map data &copy; OpenStreetMap contributors · Google Maps walking sections total {(routeDistanceM / 1000).toFixed(1)}km.</p>
+          <div className="flex flex-wrap items-center gap-4 text-[11px] text-slate-500 mb-3"><span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-orange-600" /> Selected shopping stop</span><span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-indigo-600" /> Priced store</span><span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-slate-400" /> No price data</span></div>
+          <p className="text-[11px] text-slate-400 mb-3">Google Maps {travelMode === 'public-transport' ? 'walking sections' : `${travelMode} route`} total {(routeDistanceM / 1000).toFixed(1)}km.</p>
 
-          {nearbyAlternatives.length > 0 && <Card className="p-3.5 mb-3 border-indigo-100 bg-indigo-50/50"><h3 className="text-sm font-semibold text-slate-800">Nearby independent groceries</h3><p className="text-xs text-slate-500 mt-1 mb-2">No cheaper fully priced mainstream split was found. These local grocery stops are on the walking route; their prices are not in the comparison feed.</p><div className="space-y-2">{nearbyAlternatives.map((store) => <div key={store.id} className="flex items-center justify-between gap-3 rounded-lg bg-white px-3 py-2"><div><p className="text-sm font-medium text-slate-700">{store.name}</p><p className="text-xs text-slate-400">{Math.round(store.distanceFromRouteMeters)}m from walking route · price unavailable</p></div><Button variant="outline" onClick={() => useIndependentStore(store)}>Plan this stop</Button></div>)}</div></Card>}
+          {nearbyAlternatives.length > 0 && <Card className="p-3.5 mb-3 border-indigo-100 bg-indigo-50/50"><h3 className="text-sm font-semibold text-slate-800">Nearby independent groceries</h3><p className="text-xs text-slate-500 mt-1 mb-2">No cheaper fully priced mainstream split was found. These local grocery stops are near your selected route; their prices are not in the comparison feed.</p><div className="space-y-2">{nearbyAlternatives.map((store) => <div key={store.id} className="flex items-center justify-between gap-3 rounded-lg bg-white px-3 py-2"><div><p className="text-sm font-medium text-slate-700">{store.name}</p><p className="text-xs text-slate-400">{Math.round(store.distanceFromRouteMeters)}m from route · price unavailable</p></div><Button variant="outline" onClick={() => useIndependentStore(store)}>Plan this stop</Button></div>)}</div></Card>}
 
           {stores.length === 0 ? (
-            <EmptyState icon={<ShoppingCart size={22} />} title={`No complete ${selectedBasketCount}/${selectedBasketCount} shops on the walking route`} description="Only stores with a price match for every selected item are shown." />
+            <EmptyState icon={<ShoppingCart size={22} />} title={`No complete ${selectedBasketCount}/${selectedBasketCount} shops on the selected route`} description="Only stores with a price match for every selected item are shown." />
           ) : (
             <div className="space-y-3">
                       {stores.slice(0, 2).map((store) => {
@@ -819,7 +835,7 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
                   <Card key={store.id} className="p-3.5">
                     <div className="flex items-center justify-between mb-1">
                       <p className="font-medium text-slate-800">{store.name}</p>
-                      <Badge tone={storeQuote ? 'green' : 'slate'}>{storeQuote ? `${storeQuote.matched}/${storeQuote.totalItems} priced` : 'Price unavailable'} · {Math.round(store.distanceFromRouteMeters)}m walk</Badge>
+                      <Badge tone={storeQuote ? 'green' : 'slate'}>{storeQuote ? `${storeQuote.matched}/${storeQuote.totalItems} priced` : 'Price unavailable'} · {Math.round(store.distanceFromRouteMeters)}m from route</Badge>
                     </div>
                     <p className="text-xs font-semibold text-emerald-800 mb-2">{storeQuote ? `Store subtotal · £${assignedSubtotal.toFixed(2)}` : 'Item prices are unavailable for this store'}</p>
                     <p className="text-xs text-slate-400 mb-2">{store.osmTags.provider === 'Google Places' ? 'Google Places location · price checked against the available store catalogue' : 'OpenStreetMap directory fallback · price checked against the available store catalogue'}</p>
@@ -832,7 +848,7 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
                           if (!item) return null;
                           return (
                             <div key={id} className="flex items-center justify-between text-sm">
-                          <span>{item.name}{storeQuote?.pricedItems.find((line) => line.itemId === id) && <> · £{storeQuote.pricedItems.find((line) => line.itemId === id)!.price.toFixed(2)}</>}</span>
+                          <span>{item.name}{storeQuote?.pricedItems.find((line) => line.itemId === id) && (() => { const line = storeQuote.pricedItems.find((priceLine) => priceLine.itemId === id)!; return <> · £{line.price.toFixed(2)}{line.loyaltyPrice !== undefined ? <span className="ml-1 text-[10px] font-medium text-emerald-700">{loyaltyProgram(storeQuote.retailer)} · shelf £{line.shelfPrice.toFixed(2)}</span> : null}</>; })()}</span>
                             </div>
                           );
                         })}
@@ -843,7 +859,7 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
               })}
             </div>
           )}
-          <p className="text-xs text-slate-400 mt-3">All shown shops price the complete basket and sit within walking distance of a return-route walking leg. Confirm allocation to add each stop to Today’s agenda.</p>
+          <p className="text-xs text-slate-400 mt-3">Priced shops match the complete basket and sit within your chosen route distance. Confirm allocation to add each stop to Today’s agenda.</p>
         </div>
       )}
     </Sheet>

@@ -39,9 +39,11 @@ export interface GroceryPriceRow {
 export interface BasketRetailerTotal {
   retailer: string;
   total: number;
+  shelfTotal: number;
+  loyaltySavings: number;
   matched: number;
   totalItems: number;
-  pricedItems: Array<{ itemId: string; itemName: string; price: number; productName: string; productUrl?: string }>;
+  pricedItems: Array<{ itemId: string; itemName: string; price: number; shelfPrice: number; loyaltyPrice?: number; loyaltySavings: number; productName: string; productUrl?: string }>;
 }
 
 async function loadSnapshot(): Promise<GroceryPriceRow[]> {
@@ -161,9 +163,24 @@ export async function compareUkBasket(items: ShoppingItem[]): Promise<{ totals: 
     const pricedItems: BasketRetailerTotal['pricedItems'] = [];
     for (const item of items) {
       const best = availableRows.filter((row) => matchesItem(item, row)).sort((a, b) => priceFor(a) - priceFor(b))[0];
-      if (best) pricedItems.push({ itemId: item.id, itemName: item.name, price: priceFor(best) * quantityMultiplier(item, best), productName: best.name, productUrl: best.url });
+      if (best) {
+        const multiplier = quantityMultiplier(item, best);
+        const shelfPrice = Number(best.price) * multiplier;
+        const loyaltyPrice = Number(best.loyaltyPrice);
+        const hasLoyaltyPrice = Number.isFinite(loyaltyPrice) && loyaltyPrice > 0 && loyaltyPrice < Number(best.price);
+        const effectivePrice = priceFor(best) * multiplier;
+        pricedItems.push({ itemId: item.id, itemName: item.name, price: effectivePrice, shelfPrice, ...(hasLoyaltyPrice ? { loyaltyPrice: loyaltyPrice * multiplier } : {}), loyaltySavings: Math.max(0, shelfPrice - effectivePrice), productName: best.name, productUrl: best.url });
+      }
     }
-    return { retailer, total: pricedItems.reduce((sum, row) => sum + row.price, 0), matched: pricedItems.length, totalItems: items.length, pricedItems };
+    return {
+      retailer,
+      total: pricedItems.reduce((sum, row) => sum + row.price, 0),
+      shelfTotal: pricedItems.reduce((sum, row) => sum + row.shelfPrice, 0),
+      loyaltySavings: pricedItems.reduce((sum, row) => sum + row.loyaltySavings, 0),
+      matched: pricedItems.length,
+      totalItems: items.length,
+      pricedItems
+    };
   }).filter((retailer) => retailer.matched > 0).sort((a, b) => a.total - b.total);
   const priceByItem: Record<string, number> = {};
   for (const item of items) {
