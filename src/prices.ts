@@ -1,4 +1,5 @@
 import type { ShoppingItem } from './types';
+import { newId, nowIso } from './types';
 import { aiCacheGet, aiCacheSet } from './db';
 
 const PRICE_DATA_URL = 'https://api.apify.com/v2/datasets/ynAT9NPps2EdjMOJa/items?format=json&limit=1000';
@@ -75,11 +76,63 @@ function quantityMultiplier(item: ShoppingItem, row: GroceryPriceRow): number {
   return Math.max(1, Math.ceil(need / pack));
 }
 
+const CATALOG_CATEGORIES = [
+  { name: 'Milk', terms: ['milk'] }, { name: 'Bread', terms: ['bread', 'loaf'] },
+  { name: 'Eggs', terms: ['egg'] }, { name: 'Cheese', terms: ['cheddar', 'cheese'] },
+  { name: 'Pasta', terms: ['pasta', 'spaghetti', 'penne'] }, { name: 'Rice', terms: ['rice'] },
+  { name: 'Potatoes', terms: ['potato'] }, { name: 'Tomatoes', terms: ['tomato'] },
+  { name: 'Spinach', terms: ['spinach'] }, { name: 'Chicken', terms: ['chicken breast', 'chicken'] },
+  { name: 'Oats', terms: ['oat', 'porridge'] }, { name: 'Apples', terms: ['apple'] },
+  { name: 'Bananas', terms: ['banana'] }, { name: 'Yoghurt', terms: ['yoghurt', 'yogurt'] },
+  { name: 'Carrots', terms: ['carrot'] }, { name: 'Butter', terms: ['butter'] },
+  { name: 'Cereal', terms: ['cereal', 'corn flakes'] }, { name: 'Coffee', terms: ['coffee'] },
+  { name: 'Tea', terms: ['tea bags', 'tea'] }, { name: 'Beans', terms: ['baked beans', 'kidney beans'] }
+];
+
+function canonicalRetailer(value: string): string {
+  const name = value.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const chains = ['sainsburys', 'tesco', 'waitrose', 'aldi', 'asda', 'lidl', 'morrisons', 'iceland', 'coop'];
+  return chains.find((chain) => name.includes(chain)) ?? name;
+}
+
+/** Extra grocery ideas from the live feed, limited to categories priced by at
+ * least two distinct chains and excluding anything already on the basket. */
+export async function getCatalogueExpansion(items: ShoppingItem[]): Promise<ShoppingItem[]> {
+  const rows = await loadSnapshot();
+  const existingNames = items.map((item) => item.name.toLowerCase());
+  const retailersByCategory = CATALOG_CATEGORIES.map((category) => {
+    const matched = rows.filter((row) => {
+      const name = row.name.toLowerCase();
+      if (/ready meal|chicken pasta|porridge pot|microwave meal|meal deal/.test(name)) return false;
+      return category.terms.some((term) => name.includes(term));
+    });
+    const chains = new Set(matched.map((row) => canonicalRetailer(row.retailer)));
+    return { category, chains };
+  });
+  return retailersByCategory.filter(({ category, chains }) =>
+    chains.size > 1 && !existingNames.some((name) => category.terms.some((term) => name.includes(term)))
+  ).map(({ category }) => ({
+    id: `catalog-${category.name.toLowerCase()}-${newId()}`,
+    name: category.name,
+    quantity: 1,
+    unit: 'pcs',
+    purchased: false,
+    reason: 'manual',
+    estimatedPrice: null,
+    priceSource: 'unknown',
+    assignedShopId: null,
+    assignedShopName: '',
+    assignedShopLocation: '',
+    createdAt: nowIso(),
+    updatedAt: nowIso()
+  }));
+}
+
 export async function compareUkBasket(items: ShoppingItem[]): Promise<{ totals: BasketRetailerTotal[]; priceByItem: Record<string, number>; latestAt: string | null }> {
   const rows = await loadSnapshot();
-  const retailers = [...new Set(rows.map((row) => row.retailer))];
+  const retailers = [...new Set(rows.map((row) => canonicalRetailer(row.retailer)))];
   const totals: BasketRetailerTotal[] = retailers.map((retailer) => {
-    const availableRows = rows.filter((row) => row.retailer === retailer);
+    const availableRows = rows.filter((row) => canonicalRetailer(row.retailer) === retailer);
     const pricedItems: BasketRetailerTotal['pricedItems'] = [];
     for (const item of items) {
       const best = availableRows.filter((row) => matchesItem(item, row)).sort((a, b) => priceFor(a) - priceFor(b))[0];

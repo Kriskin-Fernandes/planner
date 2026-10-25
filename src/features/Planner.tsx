@@ -18,10 +18,10 @@ import { TASK_PRIORITY_LABELS, TASK_PRIORITY_COLORS } from '../data';
 import type { CalendarEvent, Task, TaskPriority, Recurrence, ShoppingItem, StoreCandidate, GeoPoint } from '../types';
 import { newId, nowIso } from '../types';
 import { formatDate, formatDateTime, formatRelativeDays, daysUntil } from '../lib';
-import { detectClashes, expandEventOccurrences, eventsToIcs, icsToEvents, groupTasks, filterStoresNearRoute, allocateItemsToStores } from '../services';
+import { detectClashes, expandEventOccurrences, eventsToIcs, icsToEvents, groupTasks, filterStoresNearRoute } from '../services';
 import { classifyTaskLocal, classifyTaskWithGemini, isGeminiConfigured } from '../ai';
 import { geocode, findSupermarketsNearRoute, getTransitWalkingSegments, type GeocodeResult } from '../geo';
-import { compareUkBasket, type BasketRetailerTotal } from '../prices';
+import { compareUkBasket, getCatalogueExpansion, type BasketRetailerTotal } from '../prices';
 
 type PlannerTab = 'schedule' | 'todo' | 'grouping';
 
@@ -524,18 +524,32 @@ const storeIcon = (color: string) =>
   });
 
 function compareCommonItems(totals: BasketRetailerTotal[]) {
-  let best: { matched: number; cheaper: string; dearer: string; saved: number; cheaperTotal: number; dearerTotal: number; splitTotal: number } | null = null;
-  for (let i = 0; i < totals.length; i++) for (let j = i + 1; j < totals.length; j++) {
-    const left = totals[i]; const right = totals[j];
-    const rightById = new Map(right.pricedItems.map((line) => [line.itemId, line]));
-    const shared = left.pricedItems.filter((line) => rightById.has(line.itemId));
-    const leftTotal = shared.reduce((sum, line) => sum + line.price, 0);
-    const rightTotal = shared.reduce((sum, line) => sum + (rightById.get(line.itemId)?.price ?? 0), 0);
-    const splitTotal = shared.reduce((sum, line) => sum + Math.min(line.price, rightById.get(line.itemId)?.price ?? line.price), 0);
-    const comparison = { matched: shared.length, cheaper: leftTotal <= rightTotal ? left.retailer : right.retailer, dearer: leftTotal <= rightTotal ? right.retailer : left.retailer, saved: Math.abs(leftTotal - rightTotal), cheaperTotal: Math.min(leftTotal, rightTotal), dearerTotal: Math.max(leftTotal, rightTotal), splitTotal };
-    if (shared.length && (!best || comparison.matched > best.matched || (comparison.matched === best.matched && comparison.saved > best.saved))) best = comparison;
+  const complete = totals.filter((row) => row.matched === row.totalItems && row.totalItems > 0);
+  if (complete.length < 2) return null;
+  const itemIds = complete[0].pricedItems.map((line) => line.itemId);
+  if (!itemIds.length || complete.some((row) => row.pricedItems.length !== itemIds.length)) return null;
+  let best: { matched: number; cheaper: string; dearer: string; chains: string[]; saved: number; cheaperTotal: number; dearerTotal: number; splitTotal: number } | null = null;
+  for (let i = 0; i < complete.length; i++) for (let j = i + 1; j < complete.length; j++) {
+    const left = complete[i], right = complete[j];
+    const splitTotal = itemIds.reduce((sum, id) => sum + Math.min(left.pricedItems.find((line) => line.itemId === id)!.price, right.pricedItems.find((line) => line.itemId === id)!.price), 0);
+    const cheapest = left.total <= right.total ? left : right;
+    const comparison = { matched: itemIds.length, cheaper: cheapest.retailer, dearer: left === cheapest ? right.retailer : left.retailer, chains: [left.retailer, right.retailer], saved: Math.max(0, cheapest.total - splitTotal), cheaperTotal: cheapest.total, dearerTotal: Math.max(left.total, right.total), splitTotal };
+    if (!best || comparison.saved > best.saved) best = comparison;
   }
   return best;
+}
+
+function allocateByBestPrice(items: ShoppingItem[], stores: StoreCandidate[], totals: BasketRetailerTotal[], allowSplit: boolean) {
+  const allocation: Record<string, string[]> = {};
+  const candidates = allowSplit ? stores : [...stores].sort((a, b) => (storePriceRow(a, totals)?.total ?? Infinity) - (storePriceRow(b, totals)?.total ?? Infinity)).slice(0, 1);
+  for (const item of items) {
+    const ranked = candidates.map((store) => ({ store, line: storePriceRow(store, totals)?.pricedItems.find((row) => row.itemId === item.id) }))
+      .filter((entry): entry is { store: StoreCandidate; line: NonNullable<ReturnType<typeof storePriceRow>>['pricedItems'][number] } => !!entry.line)
+      .sort((a, b) => a.line.price - b.line.price);
+    const chosen = ranked[0]?.store;
+    if (chosen) allocation[chosen.id] = [...(allocation[chosen.id] ?? []), item.id];
+  }
+  return allocation;
 }
 
 const retailerKey = (name: string) => name.toLocaleLowerCase().replace(/[^a-z0-9]/g, '');
@@ -555,7 +569,7 @@ const pinIcon = (color: string) =>
   });
 
 function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
-  const { shoppingItems, updateShoppingItem, deleteShoppingItem, settings, preferences, pushToast } = useApp();
+  const { shoppingItems, updateShoppingItem, deleteShoppingItem, addShoppingItem, settings, preferences, pushToast } = useApp();
   const [startQuery, setStartQuery] = useState(settings.homeAddress || '69 Yeldham Road, W6 8JQ');
   const [destQuery, setDestQuery] = useState(preferences.locationTags.Uni || 'Imperial College London');
   const [deadline, setDeadline] = useState('');
@@ -571,6 +585,7 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
   const [priceTotals, setPriceTotals] = useState<BasketRetailerTotal[]>([]);
   const [priceDate, setPriceDate] = useState<string | null>(null);
   const [priceMessage, setPriceMessage] = useState('');
+  const [catalogueItems, setCatalogueItems] = useState<ShoppingItem[]>([]);
   const hasAutoStarted = useRef(false);
 
   const pendingItems = shoppingItems.filter((i) => !i.purchased);
@@ -589,8 +604,8 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
   async function runPlan() {
     if (!settings.googleMapsApiKey.trim()) { pushToast('Add a Google Maps Routes API key in Settings to find shops along actual walking sections.', 'error'); return; }
     if (!startQuery.trim() || !destQuery.trim()) { pushToast('Enter your home and university locations', 'error'); return; }
-    const itemsToAllocate = pendingItems.filter((item) => selectedItemIds.has(item.id));
-    if (!itemsToAllocate.length) { pushToast('Select at least one shopping item', 'info'); return; }
+    const baseItems = pendingItems.filter((item) => selectedItemIds.has(item.id));
+    if (!baseItems.length) { pushToast('Select at least one shopping item', 'info'); return; }
     setStage('loading');
     setPriceMessage('');
     setStores([]);
@@ -623,18 +638,57 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
     const nearWalkingRoute = [...candidateMap.values()].sort((a, b) => a.distanceFromRouteMeters - b.distanceFromRouteMeters);
     setStatusMsg('Comparing today’s UK supermarket prices…');
     try {
-      const comparison = await compareUkBasket(itemsToAllocate);
+      let itemsToAllocate = [...baseItems];
+      let comparison = await compareUkBasket(itemsToAllocate);
+      let saving = compareCommonItems(comparison.totals);
+      const extras: ShoppingItem[] = [];
+      if (!saving || saving.saved < 0.01) {
+        setStatusMsg('Broadening the basket with comparable groceries from the live price catalogue…');
+        const catalogue = await getCatalogueExpansion(baseItems);
+        let bestScore = comparison.totals.filter((row) => row.matched === itemsToAllocate.length).length * 100000 + (saving?.saved ?? 0);
+        for (const candidate of catalogue) {
+          const trialItems = [...itemsToAllocate, candidate];
+          const trial = await compareUkBasket(trialItems);
+          const trialComplete = trial.totals.filter((row) => row.matched === trialItems.length);
+          const trialSaving = compareCommonItems(trial.totals);
+          const score = trialComplete.length * 100000 + (trialSaving?.saved ?? 0);
+          if (score > bestScore + 0.009) {
+            extras.push(candidate);
+            itemsToAllocate = trialItems;
+            comparison = trial;
+            saving = trialSaving;
+            bestScore = score;
+          }
+          if (saving?.saved && saving.saved >= 0.01) break;
+        }
+      }
+      setCatalogueItems(extras);
       const completeBaskets = comparison.totals.filter((row) => row.matched === itemsToAllocate.length);
-      const completeWalkingStores = nearWalkingRoute.filter((store) => storePriceRow(store, completeBaskets));
+      const matchedStores = nearWalkingRoute.filter((store) => storePriceRow(store, completeBaskets));
+      const seenChains = new Set<string>();
+      const oneBranchPerChain = matchedStores.filter((store) => {
+        const chain = retailerKey(storePriceRow(store, completeBaskets)?.retailer ?? store.name);
+        if (seenChains.has(chain)) return false;
+        seenChains.add(chain);
+        return true;
+      });
+      const routeTotals = completeBaskets.filter((row) => oneBranchPerChain.some((store) => retailerKey(storePriceRow(store, completeBaskets)?.retailer ?? '') === retailerKey(row.retailer)));
+      saving = compareCommonItems(routeTotals);
+      const savingsFound = !!saving && saving.saved >= 0.01;
+      const targetChains = savingsFound ? saving!.chains.map(retailerKey) : [...routeTotals].sort((a, b) => a.total - b.total).slice(0, 1).map((row) => retailerKey(row.retailer));
+      const completeWalkingStores = oneBranchPerChain.filter((store) => targetChains.includes(retailerKey(storePriceRow(store, routeTotals)?.retailer ?? '')));
+      const selectedTotals = routeTotals.filter((row) => targetChains.includes(retailerKey(row.retailer)));
       setStores(completeWalkingStores);
-      setAllocation(allocateItemsToStores(itemsToAllocate, completeWalkingStores, 2, 12));
-      setPriceTotals(completeBaskets);
+      setAllocation(allocateByBestPrice(itemsToAllocate, completeWalkingStores, selectedTotals, savingsFound));
+      setPriceTotals(selectedTotals);
       setPriceDate(comparison.latestAt);
-      for (const item of itemsToAllocate) {
+      for (const item of baseItems) {
         const price = comparison.priceByItem[item.id];
         if (price !== undefined) await updateShoppingItem(item.id, { estimatedPrice: price, priceSource: 'verified' });
         else await deleteShoppingItem(item.id);
       }
+      if (extras.length) pushToast(`Added ${extras.length} comparable grocery ${extras.length === 1 ? 'item' : 'items'} from the price catalogue to find a better split.`, 'info');
+      if (!savingsFound) setPriceMessage('No cheaper two-store split is available for this basket. The plan keeps your groceries at the lowest priced single chain.');
       if (!completeWalkingStores.length) setPriceMessage(`No nearby return-route shop has a complete ${itemsToAllocate.length}/${itemsToAllocate.length} match.`);
     } catch (error) {
       setStores([]);
@@ -651,22 +705,19 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
     void runPlan();
   }, []);
 
-  function moveItem(itemId: string, toStoreId: string) {
-    setAllocation((prev) => {
-      const next: Record<string, string[]> = {};
-      for (const [storeId, ids] of Object.entries(prev)) next[storeId] = ids.filter((id) => id !== itemId);
-      next[toStoreId] = [...(next[toStoreId] ?? []), itemId];
-      return next;
-    });
-  }
-
   async function confirmPlan() {
+    const catalogueById = new Map(catalogueItems.map((item) => [item.id, item]));
     for (const [storeId, ids] of Object.entries(allocation)) {
       const store = stores.find((candidate) => candidate.id === storeId);
       if (!store) continue;
-      for (const id of ids) await updateShoppingItem(id, { assignedShopId: storeId, assignedShopName: store.name, assignedShopLocation: `${store.point.lat},${store.point.lon}` });
+      for (const id of ids) {
+        const patch = { assignedShopId: storeId, assignedShopName: store.name, assignedShopLocation: `${store.point.lat},${store.point.lon}` };
+        const catalogueItem = catalogueById.get(id);
+        if (catalogueItem) await addShoppingItem({ ...catalogueItem, ...patch, estimatedPrice: storePriceRow(store, priceTotals)?.pricedItems.find((line) => line.itemId === id)?.price ?? null, priceSource: 'verified' });
+        else await updateShoppingItem(id, patch);
+      }
     }
-    pushToast('Shopping stops assigned — items now show which stop to buy them at.', 'success');
+    pushToast(catalogueItems.length ? `Shopping stops assigned; ${catalogueItems.length} catalogue grocery ${catalogueItems.length === 1 ? 'item was' : 'items were'} added to your list.` : 'Shopping stops assigned — items now show which stop to buy them at.', 'success');
     onClose();
   }
 
@@ -721,7 +772,7 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
             <p className="text-xs text-slate-500 mb-3">The map shows only the walking steps of the Google Maps transit trip back from uni. Stores are shown only when the full selected basket is priced.</p>
           <Card className="p-4 mb-3 bg-emerald-50 border-emerald-100">
             <div className="flex items-center justify-between gap-2"><div><h3 className="font-semibold text-emerald-950">Supermarket price comparison</h3><p className="text-[11px] text-emerald-800">UK daily basket prices · {priceDate ? new Date(priceDate).toLocaleDateString() : 'latest feed'} · matched products only</p></div><Badge tone="green">£ GBP</Badge></div>
-            {priceTotals.length ? <div className="mt-3 space-y-2"><p className="text-xs font-semibold text-emerald-950">Store subtotals · matched items</p>{priceTotals.map((row) => <div key={row.retailer} className="flex items-center justify-between text-sm"><span className="capitalize font-medium text-slate-700">{row.retailer}</span><span className="text-slate-900">£{row.total.toFixed(2)} <span className="text-[11px] text-slate-500">({row.matched}/{row.totalItems} matched)</span></span></div>)}{savingsComparison && <div className="rounded-lg bg-white/70 p-2 text-xs font-semibold text-emerald-900">Split total £{savingsComparison.splitTotal.toFixed(2)} vs {savingsComparison.cheaper} at £{savingsComparison.cheaperTotal.toFixed(2)} · save £{(savingsComparison.cheaperTotal - savingsComparison.splitTotal).toFixed(2)}. The split uses the lowest listed price per item.</div>}<div className="flex justify-between text-xs text-emerald-900"><span>Service charge (in-store collection)</span><span>£0.00</span></div><p className="text-[10px] text-emerald-900 mt-2">Matched prices are used for the split subtotal; unmatched products are removed from the list. Source: <a className="underline" href="https://apify.com/yappman/uk-supermarket-price-scraper" target="_blank" rel="noreferrer">Yappman Data daily UK grocery price dataset</a>.</p></div> : <p className="text-xs text-emerald-900 mt-3">{priceMessage || 'No matching products in the daily feed.'}</p>}
+            {priceTotals.length ? <div className="mt-3 space-y-2"><p className="text-xs font-semibold text-emerald-950">Store subtotals · matched items</p>{priceTotals.map((row) => <div key={row.retailer} className="flex items-center justify-between text-sm"><span className="capitalize font-medium text-slate-700">{row.retailer}</span><span className="text-slate-900">£{row.total.toFixed(2)} <span className="text-[11px] text-slate-500">({row.matched}/{row.totalItems} matched)</span></span></div>)}{savingsComparison && savingsComparison.saved >= 0.01 ? <div className="rounded-lg bg-white/70 p-2 text-xs font-semibold text-emerald-900">Two-store split across {savingsComparison.chains.join(' + ')}: £{savingsComparison.splitTotal.toFixed(2)} vs {savingsComparison.cheaper} at £{savingsComparison.cheaperTotal.toFixed(2)} · save £{savingsComparison.saved.toFixed(2)} after comparing each item. This split is only shown because it is cheaper.</div> : <div className="rounded-lg bg-amber-50 p-2 text-xs font-medium text-amber-900">{priceMessage || 'No cheaper split found; keep the whole basket at the lowest priced chain.'}</div>}{catalogueItems.length > 0 && <div className="rounded-lg bg-white/70 p-2 text-xs text-emerald-900"><span className="font-semibold">Expanded with comparable groceries:</span> {catalogueItems.map((item) => item.name).join(', ')}. These will be added to your shopping list when you confirm.</div>}<div className="flex justify-between text-xs text-emerald-900"><span>Service charge (in-store collection)</span><span>£0.00</span></div><p className="text-[10px] text-emerald-900 mt-2">Matched prices are used for the split subtotal; unmatched products are removed from the list. Source: <a className="underline" href="https://apify.com/yappman/uk-supermarket-price-scraper" target="_blank" rel="noreferrer">Yappman Data daily UK grocery price dataset</a>.</p></div> : <p className="text-xs text-emerald-900 mt-3">{priceMessage || 'No matching products in the daily feed.'}</p>}
           </Card>
           <div className="h-64 rounded-xl overflow-hidden mb-3 border border-slate-200">
             <MapContainer center={center} zoom={13} style={{ height: '100%', width: '100%' }} scrollWheelZoom={false}>
@@ -743,7 +794,7 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
             <EmptyState icon={<ShoppingCart size={22} />} title={`No complete ${selectedBasketCount}/${selectedBasketCount} shops on the walking route`} description="Only stores with a price match for every selected item are shown." />
           ) : (
             <div className="space-y-3">
-              {stores.slice(0, 2).map((store) => {
+                      {stores.slice(0, 2).map((store) => {
                 const assignedIds = allocation[store.id] ?? [];
                 return (
                   <Card key={store.id} className="p-3.5">
@@ -758,13 +809,11 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
                     ) : (
                       <div className="space-y-1">
                         {assignedIds.map((id) => {
-                          const item = pendingItems.find((i) => i.id === id);
+                          const item = [...pendingItems, ...catalogueItems].find((i) => i.id === id);
                           if (!item) return null;
-                          const otherStore = stores.find((s) => s.id !== store.id);
                           return (
                             <div key={id} className="flex items-center justify-between text-sm">
                           <span>{item.name}{storePriceRow(store, priceTotals)?.pricedItems.find((line) => line.itemId === id) && <> · £{storePriceRow(store, priceTotals)!.pricedItems.find((line) => line.itemId === id)!.price.toFixed(2)}</>}</span>
-                              {otherStore && <button className="text-xs text-indigo-600" onClick={() => moveItem(id, otherStore.id)}>Move to {otherStore.name.slice(0, 16)}…</button>}
                             </div>
                           );
                         })}
