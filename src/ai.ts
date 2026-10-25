@@ -526,7 +526,7 @@ export function createBarcodeScanner(): BarcodeScanner {
   let zxingControls: { stop: () => void } | null = null;
 
   async function startNative(videoEl: HTMLVideoElement, onDetect: (text: string) => void, onError?: (e: unknown) => void) {
-    // @ts-ignore -- BarcodeDetector is not yet in all TS DOM lib versions
+    // @ts-expect-error -- BarcodeDetector is not yet in all TS DOM lib versions
     const detector = new BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'qr_code'] });
     stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
     videoEl.srcObject = stream;

@@ -282,7 +282,7 @@ function ReceiptCapture({ onItems }: { onItems: (items: GeminiReceiptItem[]) => 
           <div className="space-y-1.5 max-h-72 overflow-y-auto mb-3">
             {items.map((it, i) => (
               <label key={i} className="flex items-center gap-2 text-sm border border-slate-200 rounded-lg px-2.5 py-2">
-                <input type="checkbox" checked={selected.has(i)} onChange={() => setSelected((s) => { const n = new Set(s); n.has(i) ? n.delete(i) : n.add(i); return n; })} />
+                <input type="checkbox" checked={selected.has(i)} onChange={() => setSelected((s) => { const n = new Set(s); if (n.has(i)) n.delete(i); else n.add(i); return n; })} />
                 <input className="flex-1 text-sm outline-none" value={it.name} onChange={(e) => setItems((arr) => arr.map((x, idx) => idx === i ? { ...x, name: e.target.value } : x))} />
                 <span className="text-slate-400 text-xs">{it.quantity} {it.unit}</span>
               </label>

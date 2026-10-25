@@ -606,7 +606,7 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
             <div className="space-y-1 mb-3 max-h-40 overflow-y-auto">
               {pendingItems.map((item) => (
                 <label key={item.id} className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={selectedItemIds.has(item.id)} onChange={() => setSelectedItemIds((s) => { const n = new Set(s); n.has(item.id) ? n.delete(item.id) : n.add(item.id); return n; })} />
+                  <input type="checkbox" checked={selectedItemIds.has(item.id)} onChange={() => setSelectedItemIds((s) => { const n = new Set(s); if (n.has(item.id)) n.delete(item.id); else n.add(item.id); return n; })} />
                   {item.name} <span className="text-slate-400 text-xs">({item.quantity} {item.unit})</span>
                 </label>
               ))}

@@ -1,3 +1,4 @@
+/* eslint-env serviceworker */
 // Minimal app-shell service worker.
 // Scope: cache the built static assets so the shell loads when offline.
 // This does NOT provide reliable background sync or push while the browser

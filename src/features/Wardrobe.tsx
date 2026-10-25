@@ -665,7 +665,7 @@ function OutfitPickerSheet({ onClose, onEdit }: { onClose: () => void; onEdit: (
     setLoading(false);
   }
 
-  async function useCandidate(garmentsInOutfit: Garment[]) {
+  async function handleUseCandidate(garmentsInOutfit: Garment[]) {
     const layers: OutfitLayer[] = GARMENT_CATEGORIES.map((cat) => ({
       id: newId(),
       category: cat,
@@ -711,7 +711,7 @@ function OutfitPickerSheet({ onClose, onEdit }: { onClose: () => void; onEdit: (
               <Badge tone="slate">score {r.totalScore}</Badge>
             </div>
             {r.warnings.length > 0 && <p className="text-xs text-amber-600 mb-2">{r.warnings.join(' · ')}</p>}
-            <Button size="sm" onClick={() => useCandidate(r.garments)}>Use this outfit</Button>
+            <Button size="sm" onClick={() => handleUseCandidate(r.garments)}>Use this outfit</Button>
           </Card>
         ))}
         {!loading && results.length === 0 && <p className="text-sm text-slate-400 text-center py-6">Set your context and tap "Suggest outfits".</p>}
@@ -789,7 +789,7 @@ function ImportOutfitPhotoSheet({ onClose }: { onClose: () => void }) {
           <div className="grid grid-cols-2 gap-2">
             {garmentsFound.map((g, i) => (
               <label key={i} className={`border rounded-xl p-2.5 flex gap-2 items-start cursor-pointer ${selected.has(i) ? 'border-indigo-500 bg-indigo-50' : 'border-slate-200'}`}>
-                <input type="checkbox" checked={selected.has(i)} onChange={() => setSelected((s) => { const n = new Set(s); n.has(i) ? n.delete(i) : n.add(i); return n; })} className="mt-1" />
+                <input type="checkbox" checked={selected.has(i)} onChange={() => setSelected((s) => { const n = new Set(s); if (n.has(i)) n.delete(i); else n.add(i); return n; })} className="mt-1" />
                 <div>
                   <p className="text-sm font-medium">{g.name}</p>
                   <p className="text-xs text-slate-500">{GARMENT_CATEGORY_LABELS[g.category]} · {Math.round(g.confidence * 100)}% confidence</p>
