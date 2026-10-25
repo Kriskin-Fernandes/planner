@@ -281,6 +281,8 @@ export const ShoppingItemSchema = z.object({
   estimatedPrice: z.number().nullable().optional(),
   priceSource: z.enum(['unknown', 'estimated', 'verified']).default('unknown'),
   assignedShopId: z.string().nullable().optional(),
+  assignedShopName: z.string().optional(),
+  assignedShopLocation: z.string().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -403,14 +405,15 @@ export const UserPreferencesSchema = z.object({
 export type UserPreferences = z.infer<typeof UserPreferencesSchema>;
 
 export const GeminiModelConfigSchema = z.object({
-  textModel: z.string().default('gemini-2.5-flash'),
-  visionModel: z.string().default('gemini-2.5-flash'),
+  textModel: z.string().default('gemini-3.8-flash'),
+  visionModel: z.string().default('gemini-3.8-flash'),
 });
 export type GeminiModelConfig = z.infer<typeof GeminiModelConfigSchema>;
 
 export const ApplicationSettingsSchema = z.object({
   geminiRememberKey: z.boolean().default(true),
-  geminiModels: GeminiModelConfigSchema.default({ textModel: 'gemini-2.5-flash', visionModel: 'gemini-2.5-flash' }),
+  geminiModels: GeminiModelConfigSchema.default({ textModel: 'gemini-3.8-flash', visionModel: 'gemini-3.8-flash' }),
+  googleMapsApiKey: z.string().default(''),
   notificationsEnabled: z.boolean().default(false),
   useLocalVisionModel: z.boolean().default(false),
   osrmBaseUrl: z.string().default('https://router.project-osrm.org'),

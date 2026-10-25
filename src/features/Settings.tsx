@@ -140,12 +140,20 @@ export default function SettingsSheet({ onClose }: { onClose: () => void }) {
           {configured && <Button variant="outline" onClick={clearKey}>Clear key</Button>}
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Text model" hint="e.g. gemini-2.5-flash">
+          <Field label="Text model" hint="e.g. gemini-3.8-flash">
             <TextInput value={settings.geminiModels.textModel} onChange={(e) => updateSettings({ geminiModels: { ...settings.geminiModels, textModel: e.target.value } })} />
           </Field>
-          <Field label="Vision model" hint="e.g. gemini-2.5-flash">
+          <Field label="Vision model" hint="e.g. gemini-3.8-flash">
             <TextInput value={settings.geminiModels.visionModel} onChange={(e) => updateSettings({ geminiModels: { ...settings.geminiModels, visionModel: e.target.value } })} />
           </Field>
+        </div>
+        <div className="mt-4 rounded-xl border border-slate-200 p-3">
+          <h3 className="text-sm font-semibold text-slate-800">Google Maps walking-route data</h3>
+          <p className="my-1 text-xs text-slate-500">Used to read the walking sections of your public-transport trip so Smart Shop searches only those paths.</p>
+          <Field label="Google Maps Routes API key" hint="Enable Routes API for this key in Google Cloud Console.">
+            <TextInput type="password" autoComplete="off" value={settings.googleMapsApiKey} onChange={(e) => updateSettings({ googleMapsApiKey: e.target.value })} placeholder="Google Maps Platform key" />
+          </Field>
+          <a className="text-xs text-indigo-600 underline" href="https://developers.google.com/maps/documentation/routes/get-api-key" target="_blank" rel="noreferrer">Set up a Routes API key</a>
         </div>
         <a className="text-xs text-indigo-600 inline-flex items-center gap-1" href="https://ai.google.dev/gemini-api/docs/models" target="_blank" rel="noreferrer">
           Check current model availability on your account <ExternalLink size={11} />

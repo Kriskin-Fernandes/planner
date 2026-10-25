@@ -380,6 +380,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         ]);
 
       if (cancelled) return;
+      const legacyGeminiModel = (model: string | undefined) => model === 'gemini-2.5-flash' ? 'gemini-3.8-flash' : model;
+      const migratedSettings = settingsRaw ? {
+        ...settingsRaw,
+        homeAddress: settingsRaw.homeAddress === '69 Yeldham road' ? '69 Yeldham Road, W6 8JQ' : settingsRaw.homeAddress,
+        geminiModels: {
+          ...settingsRaw.geminiModels,
+          textModel: legacyGeminiModel(settingsRaw.geminiModels?.textModel) ?? 'gemini-3.8-flash',
+          visionModel: legacyGeminiModel(settingsRaw.geminiModels?.visionModel) ?? 'gemini-3.8-flash'
+        }
+      } : undefined;
       setState((s) => ({
         ...s,
         loading: false,
@@ -396,8 +406,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         tasks,
         reminders,
         preferences: preferencesRaw ? UserPreferencesSchema.parse(preferencesRaw) : s.preferences,
-        settings: settingsRaw ? ApplicationSettingsSchema.parse({ ...settingsRaw, homeAddress: settingsRaw.homeAddress === '69 Yeldham road' ? '69 Yeldham Road, W6 8JQ' : settingsRaw.homeAddress }) : s.settings
+        settings: migratedSettings ? ApplicationSettingsSchema.parse(migratedSettings) : s.settings
       }));
+      if (migratedSettings) await db.kvSet('settings', ApplicationSettingsSchema.parse(migratedSettings));
     })();
     return () => {
       cancelled = true;

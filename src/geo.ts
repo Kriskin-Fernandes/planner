@@ -56,6 +56,54 @@ export interface RouteResult {
   durationSeconds: number;
 }
 
+export interface TransitWalkRoute {
+  segments: GeoPoint[][];
+  walkingDistanceMeters: number;
+  durationSeconds: number;
+}
+
+function decodePolyline(encoded: string): GeoPoint[] {
+  const points: GeoPoint[] = [];
+  let index = 0, lat = 0, lon = 0;
+  while (index < encoded.length) {
+    let result = 0, shift = 0, byte: number;
+    do { byte = encoded.charCodeAt(index++) - 63; result |= (byte & 0x1f) << shift; shift += 5; } while (byte >= 0x20 && index < encoded.length);
+    lat += result & 1 ? ~(result >> 1) : result >> 1;
+    result = 0; shift = 0;
+    do { byte = encoded.charCodeAt(index++) - 63; result |= (byte & 0x1f) << shift; shift += 5; } while (byte >= 0x20 && index < encoded.length);
+    lon += result & 1 ? ~(result >> 1) : result >> 1;
+    points.push({ lat: lat / 1e5, lon: lon / 1e5 });
+  }
+  return points;
+}
+
+/** Reads the return transit itinerary and extracts only Google Maps WALK steps. */
+export async function getTransitWalkingSegments(origin: GeoPoint, destination: GeoPoint, apiKey: string): Promise<AiResult<TransitWalkRoute>> {
+  try {
+    const response = await fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': apiKey, 'X-Goog-FieldMask': 'routes.legs.steps.travelMode,routes.legs.steps.polyline.encodedPolyline,routes.legs.steps.distanceMeters,routes.duration' },
+      body: JSON.stringify({
+        origin: { location: { latLng: { latitude: origin.lat, longitude: origin.lon } } },
+        destination: { location: { latLng: { latitude: destination.lat, longitude: destination.lon } } },
+        travelMode: 'TRANSIT', computeAlternativeRoutes: true,
+        transitPreferences: { routingPreference: 'LESS_WALKING', allowedTravelModes: ['BUS', 'SUBWAY', 'TRAIN', 'LIGHT_RAIL', 'RAIL'] }
+      })
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(`Google Routes API HTTP ${response.status}: ${body?.error?.message ?? response.statusText}`);
+    const route = body.routes?.[0];
+    if (!route) throw new Error('Google Maps did not return a public-transport route for this trip.');
+    const steps = (route.legs ?? []).flatMap((leg: any) => leg.steps ?? []);
+    const walkSteps = steps.filter((step: any) => step.travelMode === 'WALK' && step.polyline?.encodedPolyline);
+    const segments = walkSteps.map((step: any) => decodePolyline(step.polyline.encodedPolyline)).filter((points: GeoPoint[]) => points.length > 1);
+    if (!segments.length) throw new Error('The Google Maps transit route did not include any walkable sections to search.');
+    return { status: 'ok', provider: 'local', data: { segments, walkingDistanceMeters: walkSteps.reduce((sum: number, step: any) => sum + Number(step.distanceMeters ?? 0), 0), durationSeconds: Number(String(route.duration ?? '0s').replace('s', '')) } };
+  } catch (err) {
+    return { status: 'error', provider: 'local', errorType: /API HTTP 4(00|03)/i.test(String(err)) ? 'invalid-key' : /failed to fetch|network/i.test(String(err)) ? 'network' : 'unavailable', message: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 export async function calculateRoute(start: GeoPoint, end: GeoPoint, mode: TravelMode): Promise<AiResult<RouteResult>> {
   const profile = OSRM_PROFILE[mode];
   const cacheKey = `route:${profile}:${start.lat.toFixed(4)},${start.lon.toFixed(4)}:${end.lat.toFixed(4)},${end.lon.toFixed(4)}`;

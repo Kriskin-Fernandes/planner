@@ -128,7 +128,7 @@ export function StarRating({ value, onChange, size = 18, readOnly = false }: { v
 
 // ---------- Blob-backed image -------------------------------------------------------
 
-export function BlobImage({ blobKey, url, alt, className = '' }: { blobKey: string | undefined; url?: string; alt: string; className?: string }) {
+export function BlobImage({ blobKey, url, alt, className = '', fit = 'cover' }: { blobKey: string | undefined; url?: string; alt: string; className?: string; fit?: 'cover' | 'contain' }) {
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
@@ -144,7 +144,7 @@ export function BlobImage({ blobKey, url, alt, className = '' }: { blobKey: stri
     };
   }, [blobKey]);
 
-    if (url) return <img src={url} alt={alt} loading="lazy" className={`object-cover ${className}`} />;
+    if (url) return <img src={url} alt={alt} loading="lazy" className={`object-${fit} ${className}`} />;
 
   if (!objectUrl) {
     return (
@@ -153,7 +153,7 @@ export function BlobImage({ blobKey, url, alt, className = '' }: { blobKey: stri
       </div>
     );
   }
-  return <img src={objectUrl} alt={alt} className={`object-cover ${className}`} />;
+  return <img src={objectUrl} alt={alt} className={`object-${fit} ${className}`} />;
 }
 
 // ---------- Empty state -----------------------------------------------------------

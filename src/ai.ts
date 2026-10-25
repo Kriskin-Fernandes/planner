@@ -113,16 +113,16 @@ async function callGeminiJson<T>(
     return { status: 'error', provider: 'gemini', errorType: 'no-key', message: 'No Gemini API key configured.' };
   }
   try {
-    const parts: Array<Record<string, unknown>> = [{ text: promptText }];
+    const input: Array<Record<string, unknown>> = [{ type: 'text', text: promptText }];
     if (imageBlob) {
       const compressed = await compressImageForUpload(imageBlob);
       const base64 = await blobToBase64(compressed);
-      parts.push({ inlineData: { mimeType: 'image/jpeg', data: base64 } });
+      input.push({ type: 'image', mime_type: 'image/jpeg', data: base64 });
     }
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ role: 'user', parts }], generationConfig: { responseMimeType: 'application/json' } })
+    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+      body: JSON.stringify({ model, input, response_format: { type: 'text', mime_type: 'application/json' } })
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -130,7 +130,7 @@ async function callGeminiJson<T>(
       Object.assign(error, { status: response.status });
       throw error;
     }
-    const text = body?.candidates?.[0]?.content?.parts?.map((part: { text?: string }) => part.text ?? '').join('');
+    const text = body?.output_text ?? body?.outputs?.filter((part: { type?: string }) => part.type === 'text').map((part: { text?: string }) => part.text ?? '').join('');
     if (!text) {
       return { status: 'error', provider: 'gemini', errorType: 'invalid-response', message: 'Empty response from Gemini.' };
     }
