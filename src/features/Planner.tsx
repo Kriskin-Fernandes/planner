@@ -18,7 +18,7 @@ import { TASK_PRIORITY_LABELS, TASK_PRIORITY_COLORS } from '../data';
 import type { CalendarEvent, Task, TaskPriority, Recurrence, ShoppingItem, StoreCandidate, GeoPoint, TravelMode } from '../types';
 import { newId, nowIso } from '../types';
 import { formatDate, formatDateTime, formatRelativeDays, daysUntil } from '../lib';
-import { detectClashes, expandEventOccurrences, eventsToIcs, icsToEvents, groupTasks, filterStoresNearRoute } from '../services';
+import { detectClashes, expandEventOccurrences, eventsToIcs, icsToEvents, groupTasks, filterStoresNearRoute, distanceToRoute } from '../services';
 import { classifyTaskLocal, classifyTaskWithGemini, isGeminiConfigured } from '../ai';
 import { geocode, findSupermarketsNearRoute, getTransitWalkingSegments, type GeocodeResult } from '../geo';
 import { compareUkBasket, getCatalogueExpansion, getSavingsDemoBasket, type BasketRetailerTotal } from '../prices';
@@ -529,12 +529,77 @@ function compareCommonItems(totals: BasketRetailerTotal[]) {
   const cheapestSingle = [...complete].sort((a, b) => a.total - b.total)[0];
   const itemIds = complete[0].pricedItems.map((line) => line.itemId);
   if (!itemIds.length || complete.some((row) => row.pricedItems.length !== itemIds.length)) return null;
+  const priceByStore = complete.map((row) => new Map(row.pricedItems.map((line) => [line.itemId, line.price])));
   let best: { matched: number; cheaper: string; dearer: string; chains: string[]; saved: number; cheaperTotal: number; dearerTotal: number; splitTotal: number } | null = null;
   for (let i = 0; i < complete.length; i++) for (let j = i + 1; j < complete.length; j++) {
     const left = complete[i], right = complete[j];
-    const splitTotal = itemIds.reduce((sum, id) => sum + Math.min(left.pricedItems.find((line) => line.itemId === id)!.price, right.pricedItems.find((line) => line.itemId === id)!.price), 0);
+    let leftWins = 0;
+    let rightWins = 0;
+    let splitTotal = 0;
+    for (const id of itemIds) {
+      const leftPrice = priceByStore[i].get(id)!;
+      const rightPrice = priceByStore[j].get(id)!;
+      if (leftPrice < rightPrice) leftWins++;
+      else if (rightPrice < leftPrice) rightWins++;
+      splitTotal += Math.min(leftPrice, rightPrice);
+    }
+    // Require genuine item-level complementarity: each stop must win at least
+    // one item, and their combined basket must beat every eligible single stop.
+    if (leftWins === 0 || rightWins === 0) continue;
     const comparison = { matched: itemIds.length, cheaper: cheapestSingle.retailer, dearer: left.total >= right.total ? left.retailer : right.retailer, chains: [left.retailer, right.retailer], saved: Math.max(0, cheapestSingle.total - splitTotal), cheaperTotal: cheapestSingle.total, dearerTotal: Math.max(left.total, right.total), splitTotal };
-    if (!best || comparison.saved > best.saved) best = comparison;
+    if (comparison.saved >= 0.01 && (!best || comparison.saved > best.saved)) best = comparison;
+  }
+  return best;
+}
+
+function compareWalkingStoreQuotes(quotes: Array<{ store: StoreCandidate; price: BasketRetailerTotal }>) {
+  // Quotes are built per physical branch, even though the Yappman feed prices
+  // are retailer-level. Check every branch's basket lines, then collapse only
+  // identical price vectors to their nearest branch before pair scoring.
+  const completeQuotes = quotes.filter(({ price }) => price.matched === price.totalItems && price.totalItems > 0);
+  const uniqueVectors = new Map<string, (typeof completeQuotes)[number]>();
+  for (const quote of completeQuotes) {
+    const signature = JSON.stringify(quote.price.pricedItems.map((line) => [line.itemId, line.price]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))));
+    const previous = uniqueVectors.get(signature);
+    if (!previous || quote.store.distanceFromRouteMeters < previous.store.distanceFromRouteMeters) uniqueVectors.set(signature, quote);
+  }
+  // Pair scoring is O(distinct price vectors² × basket items), usually far
+  // smaller than the physical branch count because chain prices are shared.
+  const complete = [...uniqueVectors.values()];
+  if (complete.length < 2) return null;
+  const baseline = [...complete].sort((a, b) => a.price.total - b.price.total || a.store.distanceFromRouteMeters - b.store.distanceFromRouteMeters)[0];
+  const itemIds = complete[0].price.pricedItems.map((line) => line.itemId);
+  if (!itemIds.length || complete.some(({ price }) => price.pricedItems.length !== itemIds.length)) return null;
+  const prices = complete.map(({ price }) => new Map(price.pricedItems.map((line) => [line.itemId, line.price])));
+  let best: { comparison: NonNullable<ReturnType<typeof compareCommonItems>>; stores: [StoreCandidate, StoreCandidate]; distance: number } | null = null;
+  for (let i = 0; i < complete.length; i++) for (let j = i + 1; j < complete.length; j++) {
+    let leftWins = 0;
+    let rightWins = 0;
+    let splitTotal = 0;
+    for (const id of itemIds) {
+      const leftPrice = prices[i].get(id)!;
+      const rightPrice = prices[j].get(id)!;
+      if (leftPrice < rightPrice) leftWins++;
+      else if (rightPrice < leftPrice) rightWins++;
+      splitTotal += Math.min(leftPrice, rightPrice);
+    }
+    if (!leftWins || !rightWins) continue;
+    const saved = baseline.price.total - splitTotal;
+    if (saved < 0.01) continue;
+    const comparison = {
+      matched: itemIds.length,
+      cheaper: baseline.price.retailer,
+      dearer: complete[i].price.total >= complete[j].price.total ? complete[i].price.retailer : complete[j].price.retailer,
+      chains: [complete[i].price.retailer, complete[j].price.retailer],
+      saved,
+      cheaperTotal: baseline.price.total,
+      dearerTotal: Math.max(complete[i].price.total, complete[j].price.total),
+      splitTotal
+    };
+    const distance = complete[i].store.distanceFromRouteMeters + complete[j].store.distanceFromRouteMeters;
+    if (!best || saved > best.comparison.saved + 0.009 || (Math.abs(saved - best.comparison.saved) < 0.01 && distance < best.distance)) {
+      best = { comparison, stores: [complete[i].store, complete[j].store], distance };
+    }
   }
   return best;
 }
@@ -672,12 +737,16 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
     try {
       let itemsToAllocate = [...baseItems];
       let comparison = await compareUkBasket(itemsToAllocate);
+      const quoteEveryWalkingStore = (totals: BasketRetailerTotal[]) => nearWalkingRoute.flatMap((store) => {
+        const price = storePriceRow(store, totals);
+        return price ? [{ store, price }] : [];
+      });
       const routePricedRows = (totals: BasketRetailerTotal[]) => {
         const complete = totals.filter((row) => row.matched === itemsToAllocate.length);
         const availableChains = new Set(nearWalkingRoute.map((store) => retailerKey(storePriceRow(store, complete)?.retailer ?? '')).filter(Boolean));
         return complete.filter((row) => availableChains.has(retailerKey(row.retailer)));
       };
-      let saving = compareCommonItems(routePricedRows(comparison.totals));
+      let saving = compareWalkingStoreQuotes(quoteEveryWalkingStore(comparison.totals))?.comparison ?? null;
       const extras: ShoppingItem[] = [];
       const targetSavings = options.targetSavings ?? 0.01;
       if (!saving || saving.saved < targetSavings) {
@@ -691,7 +760,7 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
           const trialComplete = trial.totals.filter((row) => row.matched === trialItems.length);
           const availableChains = new Set(nearWalkingRoute.map((store) => retailerKey(storePriceRow(store, trialComplete)?.retailer ?? '')).filter(Boolean));
           const trialRouteRows = trialComplete.filter((row) => availableChains.has(retailerKey(row.retailer)));
-          const trialSaving = compareCommonItems(trialRouteRows);
+          const trialSaving = compareWalkingStoreQuotes(quoteEveryWalkingStore(trial.totals))?.comparison ?? null;
           const score = trialRouteRows.length * 1_000_000 + (trialSaving?.saved ?? 0) * 1_000;
           if (score > bestScore + 0.009) {
             extras.push(candidate);
@@ -706,25 +775,27 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
       setCatalogueItems(extras);
       setPlannedItems(itemsToAllocate);
       const completeBaskets = comparison.totals.filter((row) => row.matched === itemsToAllocate.length);
-      const matchedStores = nearWalkingRoute.filter((store) => storePriceRow(store, completeBaskets));
-      const seenChains = new Set<string>();
-      const oneBranchPerChain = matchedStores.filter((store) => {
-        const chain = retailerKey(storePriceRow(store, completeBaskets)?.retailer ?? store.name);
-        if (seenChains.has(chain)) return false;
-        seenChains.add(chain);
-        return true;
-      });
-      const routeTotals = completeBaskets.filter((row) => oneBranchPerChain.some((store) => retailerKey(storePriceRow(store, completeBaskets)?.retailer ?? '') === retailerKey(row.retailer)));
-      saving = compareCommonItems(routeTotals);
-      const savingsFound = !!saving && saving.saved >= 0.01;
-      const targetChains = savingsFound ? saving!.chains.map(retailerKey) : [...routeTotals].sort((a, b) => a.total - b.total).slice(0, 1).map((row) => retailerKey(row.retailer));
-      const completeWalkingStores = oneBranchPerChain.filter((store) => targetChains.includes(retailerKey(storePriceRow(store, routeTotals)?.retailer ?? '')));
-      const selectedTotals = routeTotals.filter((row) => targetChains.includes(retailerKey(row.retailer)));
-      setStores(completeWalkingStores);
+      const matchedStoreQuotes = quoteEveryWalkingStore(completeBaskets)
+        .filter(({ price }) => price.matched === itemsToAllocate.length);
+      const routeTotals = completeBaskets.filter((row) => matchedStoreQuotes.some(({ price }) => retailerKey(price.retailer) === retailerKey(row.retailer)));
+      const routeSplit = compareWalkingStoreQuotes(matchedStoreQuotes);
+      saving = routeSplit?.comparison ?? null;
+      const savingsFound = !!routeSplit;
+      const chosenStores = savingsFound
+        ? routeSplit!.stores
+        : matchedStoreQuotes.sort((a, b) => a.price.total - b.price.total || a.store.distanceFromRouteMeters - b.store.distanceFromRouteMeters).slice(0, 1).map(({ store }) => store);
+      const selectedChains = new Set(chosenStores.map((store) => retailerKey(storePriceRow(store, routeTotals)?.retailer ?? '')));
+      const selectedTotals = routeTotals.filter((row) => selectedChains.has(retailerKey(row.retailer)));
+      // Recheck the exact Google WALK geometry immediately before selecting
+      // branches, so cached/discovery candidates can never leak off-route.
+      const confirmedWalkingStores = chosenStores.filter((store) =>
+        googleRoute.data.segments.some((walkingSegment) => distanceToRoute(store.point, walkingSegment) <= routeCorridor)
+      );
+      setStores(confirmedWalkingStores);
       const storesWithoutPrices = nearWalkingRoute.filter((store) => !storePriceRow(store, comparison.totals));
       setUnpricedStores(storesWithoutPrices);
       setNearbyAlternatives(!savingsFound ? storesWithoutPrices.filter((store) => !isMainstreamStore(store.name)).slice(0, 12) : []);
-      setAllocation(allocateByBestPrice(itemsToAllocate, completeWalkingStores, selectedTotals, savingsFound));
+      setAllocation(allocateByBestPrice(itemsToAllocate, confirmedWalkingStores, selectedTotals, savingsFound));
       setPriceTotals(selectedTotals);
       setPriceDate(comparison.latestAt);
       for (const item of baseItems) {
@@ -734,7 +805,7 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
       }
       if (extras.length) pushToast(`Added ${extras.length} comparable grocery ${extras.length === 1 ? 'item' : 'items'} from the price catalogue to find a better split.`, 'info');
       if (!savingsFound) setPriceMessage('No cheaper two-store split is available for this basket. The plan keeps your groceries at the lowest priced single chain.');
-      if (!completeWalkingStores.length) setPriceMessage(`No nearby return-route shop has a complete ${itemsToAllocate.length}/${itemsToAllocate.length} match.`);
+      if (!confirmedWalkingStores.length) setPriceMessage(`No nearby walking-route shop has a complete ${itemsToAllocate.length}/${itemsToAllocate.length} match.`);
     } catch (error) {
       setStores([]);
       setAllocation({});
