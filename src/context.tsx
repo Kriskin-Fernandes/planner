@@ -51,6 +51,36 @@ import { applyWearToGarments, completeWash as completeWashTransform, consumeIngr
 import { DEFAULT_LAUNDRY_GROUP_DEFS, buildSeedGarments, buildSeedOutfit, buildStarterOutfits, buildSeedFood, buildSeedRecipes, buildSeedShoppingItems, buildSeedTasks, buildSeedEvents } from './data';
 import { loadPersistedApiKeyIfAny } from './ai';
 
+function autoFileNeedsWash(garments: Garment[], groups: LaundryGroup[]) {
+  const nextGarments = garments.map((garment) => ({ ...garment }));
+  const nextGroups = groups.map((group) => ({ ...group, garmentIds: [...group.garmentIds] }));
+  let changed = false;
+  for (const garment of nextGarments) {
+    if (garment.wearsSinceWash < garment.maxWearsBeforeWash || garment.laundryGroupId) continue;
+    const color = garment.mainColor.match(/^#([\da-f]{6})$/i)?.[1];
+    const rgb = color ? [0, 2, 4].map((offset) => parseInt(color.slice(offset, offset + 2), 16)) : [128, 128, 128];
+    const brightness = (rgb[0] * 299 + rgb[1] * 587 + rgb[2] * 114) / 1000;
+    const preferredName = garment.careLabel.dryCleanOnly || garment.careLabel.handWashOnly || (garment.careLabel.maxWashTempC ?? 40) <= 30
+      ? 'delicates'
+      : /denim|jean/i.test(garment.name) ? 'denim' : brightness < 112 ? 'darks' : 'lights';
+    const group = nextGroups.find((candidate) => candidate.name.toLowerCase().includes(preferredName))
+      ?? nextGroups.find((candidate) => candidate.isDefault)
+      ?? nextGroups[0];
+    if (!group) {
+      garment.laundryStatus = 'needs-wash';
+      changed = true;
+      continue;
+    }
+    group.garmentIds = Array.from(new Set([...group.garmentIds, garment.id]));
+    garment.laundryGroupId = group.id;
+    garment.laundryStatus = 'needs-wash';
+    garment.updatedAt = nowIso();
+    group.updatedAt = nowIso();
+    changed = true;
+  }
+  return { garments: nextGarments, groups: nextGroups, changed };
+}
+
 export interface Toast {
   id: string;
   message: string;
@@ -469,6 +499,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           kvGet<ApplicationSettings>('settings')
         ]);
 
+      const washQueue = autoFileNeedsWash(garments, laundryGroups);
+      if (washQueue.changed) {
+        await garmentsStore.putMany(washQueue.garments.filter((g) => g.wearsSinceWash >= g.maxWearsBeforeWash));
+        await laundryGroupsStore.putMany(washQueue.groups);
+        garments.splice(0, garments.length, ...washQueue.garments);
+        laundryGroups.splice(0, laundryGroups.length, ...washQueue.groups);
+      }
+
       if (cancelled) return;
       const legacyGeminiModel = (model: string | undefined) => model === 'gemini-2.5-flash' ? 'gemini-3.8-flash' : model;
       const migratedSettings = settingsRaw ? {
@@ -587,19 +625,44 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const eventCrud = makeCrud<CalendarEvent>('calendarEvents', calendarEventsStore);
   const taskCrud = makeCrud<Task>('tasks', tasksStore);
 
+  const updateGarment = useCallback(async (id: string, patch: Partial<Garment>) => {
+    setState((s) => {
+      const current = s.garments.find((garment) => garment.id === id);
+      if (!current) return s;
+      const merged: Garment = { ...current, ...patch, updatedAt: patch.updatedAt ?? nowIso() };
+      const candidateGarments = s.garments.map((garment) => garment.id === id ? merged : garment);
+      const needsWash = merged.wearsSinceWash >= merged.maxWearsBeforeWash;
+      if (needsWash && !merged.laundryGroupId) merged.laundryStatus = 'needs-wash';
+      const filed = autoFileNeedsWash(candidateGarments, s.laundryGroups);
+      const updatedGarments = filed.garments;
+      const updatedGroups = filed.groups;
+      const updatedGarment = updatedGarments.find((garment) => garment.id === id)!;
+      if (filed.changed) updatedGarments.filter((g) => g.wearsSinceWash >= g.maxWearsBeforeWash).forEach((g) => void garmentsStore.put(g));
+      else void garmentsStore.put(updatedGarment);
+      if (filed.changed) updatedGroups.forEach((group) => void laundryGroupsStore.put(group));
+      return { ...s, garments: updatedGarments, laundryGroups: updatedGroups };
+    });
+  }, []);
+
   // ---------- Outfits: mark worn (propagates to garments) ---------------------
   const markOutfitWorn = useCallback(async (id: string) => {
     setState((s) => {
       const outfit = s.outfits.find((o) => o.id === id);
       if (!outfit) return s;
       const garmentIds = new Set(outfit.layers.flatMap((l) => l.garmentIds));
-      const updatedGarments = applyWearToGarments(s.garments, garmentIds);
+      const wornGarments = applyWearToGarments(s.garments, garmentIds);
+      const filed = autoFileNeedsWash(wornGarments, s.laundryGroups);
+      const updatedGarments = filed.garments;
+      const updatedGroups = filed.groups;
       const updatedOutfit: Outfit = { ...outfit, lastWornAt: nowIso(), wearCount: outfit.wearCount + 1, updatedAt: nowIso() };
       updatedGarments.filter((g) => garmentIds.has(g.id)).forEach((g) => garmentsStore.put(g));
+      if (filed.changed) updatedGarments.filter((g) => g.wearsSinceWash >= g.maxWearsBeforeWash).forEach((g) => garmentsStore.put(g));
+      if (filed.changed) updatedGroups.forEach((group) => laundryGroupsStore.put(group));
       outfitsStore.put(updatedOutfit);
       return {
         ...s,
         garments: updatedGarments,
+        laundryGroups: updatedGroups,
         outfits: s.outfits.map((o) => (o.id === id ? updatedOutfit : o))
       };
     });
@@ -876,7 +939,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       pushToast,
       dismissToast,
       addGarment: garmentCrud.add,
-      updateGarment: garmentCrud.update,
+      updateGarment,
       deleteGarment: garmentCrud.remove,
       addOutfit: outfitCrud.add,
       updateOutfit: outfitCrud.update,

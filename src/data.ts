@@ -154,7 +154,7 @@ export async function buildSeedGarments(): Promise<Garment[]> {
       warmthScore: d.warmthScore ?? 5,
       features: (d as any).features ?? { hood: false, waterproof: false, insulated: false, moistureWicking: false },
       careLabel: { machineWashable: true, noTumbleDry: false, handWashOnly: false, noBleach: true, dryCleanOnly: false, maxWashTempC: 40 },
-      maxWearsBeforeWash: d.category === 'bottoms' ? 4 : d.category === 'outerwear' ? 8 : 2,
+      maxWearsBeforeWash: 2,
       wearsSinceWash: 0,
       laundryStatus: 'clean',
       laundryGroupId: null,

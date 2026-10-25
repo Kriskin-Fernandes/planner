@@ -94,7 +94,7 @@ export const GarmentSchema = z.object({
   warmthScore: z.number().min(0).max(10),
   features: GarmentFeaturesSchema.default({}),
   careLabel: CareLabelSchema.default({}),
-  maxWearsBeforeWash: z.number().int().min(1).default(1),
+  maxWearsBeforeWash: z.number().int().min(1).default(2),
   wearsSinceWash: z.number().int().min(0).default(0),
   laundryStatus: LaundryStatusSchema.default('clean'),
   laundryGroupId: z.string().nullable().default(null),

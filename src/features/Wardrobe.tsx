@@ -168,7 +168,7 @@ function AddGarmentSheet({ onClose }: { onClose: () => void }) {
     warmthScore: 5,
     features: { ...EMPTY_FEATURES },
     careLabel: { ...EMPTY_CARE },
-    maxWearsBeforeWash: 3
+    maxWearsBeforeWash: 2
   });
 
   async function handleFile(file: File) {
@@ -233,7 +233,7 @@ function AddGarmentSheet({ onClose }: { onClose: () => void }) {
       warmthScore: form.warmthScore ?? 5,
       features: (form.features as any) ?? EMPTY_FEATURES,
       careLabel: (form.careLabel as any) ?? EMPTY_CARE,
-      maxWearsBeforeWash: form.maxWearsBeforeWash ?? 3,
+      maxWearsBeforeWash: form.maxWearsBeforeWash ?? 2,
       wearsSinceWash: 0,
       laundryStatus: 'clean',
       laundryGroupId: null,
@@ -401,7 +401,7 @@ function GarmentDetailSheet({ garment, onClose }: { garment: Garment; onClose: (
       </div>
       <div className="grid grid-cols-2 gap-3">
         <Field label={`Wears since wash: ${form.wearsSinceWash}`}>
-          <input type="range" min={0} max={Math.max(form.maxWearsBeforeWash, form.wearsSinceWash)} value={form.wearsSinceWash} onChange={(e) => setForm((f) => ({ ...f, wearsSinceWash: Number(e.target.value) }))} className="w-full" />
+          <input type="range" min={0} max={Math.max(10, form.maxWearsBeforeWash, form.wearsSinceWash)} value={form.wearsSinceWash} onChange={(e) => setForm((f) => ({ ...f, wearsSinceWash: Number(e.target.value) }))} className="w-full" />
         </Field>
         <Field label="Max wears before wash">
           <TextInput type="number" min={1} value={form.maxWearsBeforeWash} onChange={(e) => setForm((f) => ({ ...f, maxWearsBeforeWash: Number(e.target.value) }))} />
@@ -770,7 +770,7 @@ function ImportOutfitPhotoSheet({ onClose }: { onClose: () => void }) {
         id: newId(), name: g.name, category: g.category, layerRole: g.layerRole, mainColor: g.mainColor,
         secondaryColors: g.secondaryColors, pattern: g.pattern, texture: g.texture, thickness: g.thickness,
         warmthScore: g.warmthScore, features: g.features, careLabel: { ...EMPTY_CARE },
-        maxWearsBeforeWash: 3, wearsSinceWash: 0, laundryStatus: 'clean', laundryGroupId: null, lastWornAt: null,
+        maxWearsBeforeWash: 2, wearsSinceWash: 0, laundryStatus: 'clean', laundryGroupId: null, lastWornAt: null,
         aiConfidence: g.confidence, attributeSource: 'ai-gemini', images: [display as any],
         isGeneratedApproximation: true, notes: 'Extracted from a full outfit photo — crop not isolated; original photo preserved.',
         createdAt: nowIso(), updatedAt: nowIso()
@@ -872,6 +872,7 @@ function LaundryTab() {
       <div className="space-y-3">
         {laundryGroups.map((group) => {
           const items = group.garmentIds.map((id) => byId.get(id)).filter((g): g is Garment => !!g);
+          const readyToWash = items.filter((g) => g.wearsSinceWash >= g.maxWearsBeforeWash || g.laundryStatus === 'needs-wash').length;
           const conflicts = findCareConflicts(items);
           return (
             <Card key={group.id} className="p-3.5">
@@ -880,6 +881,7 @@ function LaundryTab() {
                   <p className="font-medium text-slate-800">{group.name}</p>
                   {group.isDefault && <Badge tone="slate">Default</Badge>}
                   {group.userCorrected && <Badge tone="sky">Customised</Badge>}
+                  {readyToWash > 0 && <Badge tone="rose">{readyToWash} ready to wash</Badge>}
                 </div>
                 <IconButton icon={<SlidersHorizontal size={15} />} label="Edit settings" onClick={() => setEditingGroup(group)} />
               </div>
