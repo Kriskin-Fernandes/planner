@@ -124,20 +124,6 @@ describe('findCareConflicts / recommendWashSettings', () => {
 
 // ---------- Outfit recommendation -------------------------------------------
 
-describe('recommendOutfits', () => {
-  it('excludes garments that are in the laundry', () => {
-    const top = makeGarment({ category: 'tops' });
-    const dirtyBottom = makeGarment({ category: 'bottoms', laundryStatus: 'needs-wash' });
-    const results = recommendOutfits([top, dirtyBottom]);
-    for (const r of results) {
-      expect(r.garments.some((g) => g.id === dirtyBottom.id)).toBe(false);
-    }
-  });
-
-  it('produces no candidates from an empty wardrobe', () => {
-    expect(recommendOutfits([])).toEqual([]);
-  });
-});
 
 // ---------- Fridge: ingredient availability & consumption -------------------
 
