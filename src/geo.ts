@@ -83,9 +83,8 @@ function decodePolyline(encoded: string): GeoPoint[] {
 
 /** Reads the return transit itinerary and extracts only Google Maps WALK steps. */
 export async function getTransitWalkingSegments(origin: GeoPoint, destination: GeoPoint, apiKey: string, mode: TravelMode = 'public-transport'): Promise<AiResult<TransitWalkRoute>> {
-  const cacheKey = `google-route:${mode}:${origin.lat.toFixed(4)},${origin.lon.toFixed(4)}:${destination.lat.toFixed(4)},${destination.lon.toFixed(4)}`;
-  const cached = await aiCacheGet<TransitWalkRoute>(cacheKey);
-  if (cached) return { status: 'ok', provider: 'local', data: cached };
+  // Route schedules and transit options are time-sensitive. Always ask Routes
+  // for a fresh itinerary; only the slower-changing Places catalogue is cached.
   try {
     const travelMode = ({ walking: 'WALK', cycling: 'BICYCLE', driving: 'DRIVE', 'public-transport': 'TRANSIT' } as const)[mode];
     const transit = mode === 'public-transport';
@@ -117,7 +116,7 @@ export async function getTransitWalkingSegments(origin: GeoPoint, destination: G
       if (!segments[0] || segments[0].length < 2) throw new Error(`Google Maps did not return route geometry for ${mode}.`);
     }
     const data = { segments, routeDistanceMeters, durationSeconds: Number(String(route.duration ?? '0s').replace('s', '')) };
-    await aiCacheSet(cacheKey, data);
+    // Do not persist route results: Smart Shop must use current directions.
     return { status: 'ok', provider: 'local', data };
   } catch (err) {
     return { status: 'error', provider: 'local', errorType: /API HTTP 4(00|03)/i.test(String(err)) ? 'invalid-key' : /failed to fetch|network/i.test(String(err)) ? 'network' : 'unavailable', message: err instanceof Error ? err.message : String(err) };
@@ -181,9 +180,9 @@ async function findSupermarketsNearRouteUncached(route: GeoPoint[], corridorWidt
     return { status: 'error', provider: 'local', errorType: 'invalid-response', message: 'No route geometry to search along.' };
   }
   const bbox = routeBoundingBox(route, corridorWidthMeters + 200);
-  const cacheKey = `google-places:${bbox.south.toFixed(3)},${bbox.west.toFixed(3)},${bbox.north.toFixed(3)},${bbox.east.toFixed(3)}:${corridorWidthMeters}`;
-  const cached = await aiCacheGet<StoreCandidate[]>(cacheKey);
-  if (cached) return { status: 'ok', provider: 'local', data: cached };
+  const cacheKey = `osm-stores:${bbox.south.toFixed(3)},${bbox.west.toFixed(3)},${bbox.north.toFixed(3)},${bbox.east.toFixed(3)}`;
+  const cached = await aiCacheGet<{ savedAt: number; stores: StoreCandidate[] }>(cacheKey);
+  if (cached && Date.now() - cached.savedAt < 7 * 24 * 60 * 60 * 1000) return { status: 'ok', provider: 'local', data: cached.stores };
 
   let placesFallbackReason = '';
   if (apiKey.trim()) {
@@ -191,7 +190,7 @@ async function findSupermarketsNearRouteUncached(route: GeoPoint[], corridorWidt
       const points: GeoPoint[] = [];
       let walkedSinceSearch = Infinity;
       for (let i = 0; i < route.length; i++) {
-        if (walkedSinceSearch >= 650 || i === 0 || i === route.length - 1) {
+        if (walkedSinceSearch >= 600 || i === 0 || i === route.length - 1) {
           points.push(route[i]);
           walkedSinceSearch = 0;
         }
@@ -202,8 +201,24 @@ async function findSupermarketsNearRouteUncached(route: GeoPoint[], corridorWidt
           walkedSinceSearch += Math.hypot(dx, dy);
         }
       }
+      const cells = new Map<string, GeoPoint>();
+      for (const point of points) {
+        // A ~330m grid lets different routes and corridor widths reuse the
+        // same Places response. Search from the cell centre with enough radius
+        // to cover the full supported 1.5km corridor plus grid offset.
+        const latCell = Math.round(point.lat / 0.003) * 0.003;
+        const lonCell = Math.round(point.lon / 0.003) * 0.003;
+        const key = `${latCell.toFixed(3)},${lonCell.toFixed(3)}`;
+        cells.set(key, { lat: latCell, lon: lonCell });
+      }
       const found = new Map<string, StoreCandidate>();
-      for (const point of points.slice(0, 10)) {
+      for (const [cell, point] of cells) {
+        const cellCacheKey = `google-places-cell-v2:${cell}`;
+        const cachedCell = await aiCacheGet<{ savedAt: number; stores: StoreCandidate[] }>(cellCacheKey);
+        if (cachedCell && Date.now() - cachedCell.savedAt < 7 * 24 * 60 * 60 * 1000) {
+          cachedCell.stores.forEach((store) => found.set(store.id, store));
+          continue;
+        }
         const response = await fetch('https://places.googleapis.com/v1/places:searchNearby', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': apiKey, 'X-Goog-FieldMask': 'places.id,places.displayName,places.location,places.types,places.formattedAddress' },
@@ -211,11 +226,12 @@ async function findSupermarketsNearRouteUncached(route: GeoPoint[], corridorWidt
             includedTypes: ['supermarket', 'grocery_store', 'convenience_store', 'food_store'],
             maxResultCount: 20,
             rankPreference: 'DISTANCE',
-            locationRestriction: { circle: { center: { latitude: point.lat, longitude: point.lon }, radius: Math.max(100, Math.min(500, corridorWidthMeters)) } }
+            locationRestriction: { circle: { center: { latitude: point.lat, longitude: point.lon }, radius: 2000 } }
           })
         });
         const body = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(`Google Places HTTP ${response.status}: ${body?.error?.message ?? response.statusText}`);
+        const cellStores: StoreCandidate[] = [];
         for (const place of body.places ?? []) {
           if (!place.id || !place.location) continue;
           const candidate: StoreCandidate = {
@@ -228,10 +244,11 @@ async function findSupermarketsNearRouteUncached(route: GeoPoint[], corridorWidt
             assignedItemIds: []
           };
           found.set(candidate.id, candidate);
+          cellStores.push(candidate);
         }
+        await aiCacheSet(cellCacheKey, { savedAt: Date.now(), stores: cellStores }, 7 * 24 * 60 * 60 * 1000);
       }
       const places = [...found.values()];
-      await aiCacheSet(cacheKey, places);
       return { status: 'ok', provider: 'local', data: places };
     } catch (err) {
       // Google Places is the primary source. If it is not enabled for the key,
@@ -290,7 +307,7 @@ async function findSupermarketsNearRouteUncached(route: GeoPoint[], corridorWidt
         } as StoreCandidate;
       })
       .filter((s: StoreCandidate | null): s is StoreCandidate => !!s);
-    await aiCacheSet(cacheKey, stores);
+    await aiCacheSet(cacheKey, { savedAt: Date.now(), stores }, 7 * 24 * 60 * 60 * 1000);
     return { status: 'ok', provider: 'local', data: stores };
   } catch (err) {
     return {

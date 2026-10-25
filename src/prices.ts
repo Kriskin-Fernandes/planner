@@ -155,6 +155,45 @@ export async function getCatalogueExpansion(items: ShoppingItem[]): Promise<Shop
   }));
 }
 
+/** Build a compact, price-feed-backed basket for the London route demo. Each
+ * category is included only when Yappman's current snapshot has listings from
+ * at least two chains, and categories with wider cross-chain price spreads
+ * are preferred so the route-aware planner has a meaningful split to find. */
+export async function getSavingsDemoBasket(): Promise<ShoppingItem[]> {
+  const rows = await loadSnapshot();
+  const candidates = CATALOG_CATEGORIES.map((category) => {
+    const pricesByRetailer = new Map<string, number>();
+    for (const row of rows) {
+      if (!category.terms.some((term) => row.name.toLowerCase().includes(term))) continue;
+      const chain = canonicalRetailer(row.retailer);
+      const price = priceFor(row);
+      pricesByRetailer.set(chain, Math.min(pricesByRetailer.get(chain) ?? Infinity, price));
+    }
+    const prices = [...pricesByRetailer.entries()].sort((a, b) => a[1] - b[1]);
+    if (prices.length < 2) return null;
+    const spread = prices[1][1] - prices[0][1];
+    return { category, spread, retailerCount: prices.length };
+  }).filter((item): item is NonNullable<typeof item> => !!item)
+    .sort((a, b) => (b.spread * Math.log2(b.retailerCount + 1)) - (a.spread * Math.log2(a.retailerCount + 1)))
+    .slice(0, 10);
+  const timestamp = nowIso();
+  return candidates.map(({ category }) => ({
+    id: `savings-demo-${newId()}`,
+    name: category.name,
+    quantity: 1,
+    unit: 'pcs',
+    purchased: false,
+    reason: 'manual',
+    estimatedPrice: null,
+    priceSource: 'unknown',
+    assignedShopId: null,
+    assignedShopName: '',
+    assignedShopLocation: '',
+    createdAt: timestamp,
+    updatedAt: timestamp
+  }));
+}
+
 export async function compareUkBasket(items: ShoppingItem[]): Promise<{ totals: BasketRetailerTotal[]; priceByItem: Record<string, number>; latestAt: string | null }> {
   const rows = await loadSnapshot();
   const retailers = [...new Set(rows.map((row) => canonicalRetailer(row.retailer)))];
