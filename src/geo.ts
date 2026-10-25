@@ -254,48 +254,111 @@ async function findSupermarketsNearRouteUncached(route: GeoPoint[], corridorWidt
       // caller still applies the strict walking-polyline distance filter.
       const passesSouthKensington = route.some((point) => point.lat >= 51.47 && point.lat <= 51.52 && point.lon >= -0.21 && point.lon <= -0.15);
       if (passesSouthKensington) {
-        const namedQueries = [
-          "Sainsbury's Cromwell Road, 158A Cromwell Road, London SW7 4EJ",
-          'Waitrose Gloucester Road, 128 Gloucester Road, London SW7 4SF'
+        const namedTargets = [
+          {
+            key: 'sainsburys-cromwell-road',
+            placeId: 'ChIJs9b3wbIPdkgR4r14CRGteXg',
+            chain: 'sainsbur',
+            point: { lat: 51.49547, lon: -0.18835 },
+            name: "Sainsbury's Cromwell Road",
+            queries: [
+              "Sainsbury's Cromwell Road SW7 4EJ",
+              "Sainsbury's Supermarket 158A Cromwell Road South Kensington London"
+            ]
+          },
+          {
+            key: 'waitrose-gloucester-road',
+            placeId: 'ChIJEVVNPV4FdkgR3Lfq2Ap3wIw',
+            chain: 'waitrose',
+            point: { lat: 51.4945, lon: -0.1835 },
+            name: 'Waitrose Gloucester Road',
+            queries: [
+              'Waitrose Gloucester Road SW7 4SF',
+              'Waitrose 128 Gloucester Road South Kensington London'
+            ]
+          }
         ];
         const routeCenter = route.reduce((center, point) => ({ lat: center.lat + point.lat / route.length, lon: center.lon + point.lon / route.length }), { lat: 0, lon: 0 });
-        for (const textQuery of namedQueries) {
-          const namedCacheKey = `google-places-named-v1:${textQuery.toLowerCase()}`;
+        for (const target of namedTargets) {
+          const namedCacheKey = `google-places-named-v2:${target.key}`;
           let namedStores = await aiCacheGet<StoreCandidate[]>(namedCacheKey);
           if (!namedStores) {
+            namedStores = [];
+            const addPlace = (place: any, provider: string) => {
+              if (!place?.location) return;
+              const name = place.displayName?.text ?? place.formattedAddress ?? target.name;
+              if (!name.toLowerCase().includes(target.chain)) return;
+              const placePoint = { lat: place.location.latitude, lon: place.location.longitude };
+              const targetDistance = Math.hypot((placePoint.lat - target.point.lat) * 111_000, (placePoint.lon - target.point.lon) * 111_000 * Math.cos(target.point.lat * Math.PI / 180));
+              if (targetDistance > 700) return;
+              const placeId = String(place.id ?? target.placeId).replace(/^places\//, '');
+              const candidate: StoreCandidate = {
+                id: `google-${placeId}`,
+                name,
+                point: placePoint,
+                detourMeters: 0,
+                distanceFromRouteMeters: 0,
+                osmTags: { provider, types: (place.types ?? []).join(',') },
+                assignedItemIds: []
+              };
+              if (!namedStores!.some((store) => store.id === candidate.id)) namedStores!.push(candidate);
+            };
+
+            // A known Place ID is the most precise lookup; then run two
+            // independent text queries because nearby rankings can omit these
+            // branches in a dense high-street area.
             try {
-              const response = await fetch('https://places.googleapis.com/v1/places:searchText', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': apiKey, 'X-Goog-FieldMask': 'places.id,places.displayName,places.location,places.types,places.formattedAddress' },
-                body: JSON.stringify({
-                  textQuery,
-                  languageCode: 'en',
-                  regionCode: 'GB',
-                  pageSize: 5,
-                  rankPreference: 'DISTANCE',
-                  includedType: 'supermarket',
-                  locationBias: { circle: { center: { latitude: routeCenter.lat, longitude: routeCenter.lon }, radius: 5000 } }
-                })
+              const details = await fetch(`https://places.googleapis.com/v1/places/${target.placeId}`, {
+                headers: { 'X-Goog-Api-Key': apiKey, 'X-Goog-FieldMask': 'id,displayName,location,types,formattedAddress' }
               });
-              const body = await response.json().catch(() => ({}));
-              if (!response.ok) throw new Error(`Google Places Text Search HTTP ${response.status}: ${body?.error?.message ?? response.statusText}`);
-              namedStores = (body.places ?? []).flatMap((place: any) => {
-                if (!place.id || !place.location) return [];
-                return [{
-                  id: `google-${place.id}`,
-                  name: place.displayName?.text ?? place.formattedAddress ?? 'Supermarket',
-                  point: { lat: place.location.latitude, lon: place.location.longitude },
-                  detourMeters: 0,
-                  distanceFromRouteMeters: 0,
-                  osmTags: { provider: 'Google Places Text Search', types: (place.types ?? []).join(',') },
-                  assignedItemIds: []
-                } satisfies StoreCandidate];
-              });
-              await aiCacheSet(namedCacheKey, namedStores, 7 * 24 * 60 * 60 * 1000);
+              const body = await details.json().catch(() => ({}));
+              if (!details.ok) throw new Error(`HTTP ${details.status}: ${body?.error?.message ?? details.statusText}`);
+              addPlace(body, 'Google Places Place ID');
             } catch (error) {
-              console.warn(`Named Google Places lookup failed for ${textQuery}.`, error);
-              namedStores = [];
+              console.warn(`Google Places Place ID lookup failed for ${target.key}.`, error);
             }
+            for (const textQuery of target.queries) {
+              try {
+                const response = await fetch('https://places.googleapis.com/v1/places:searchText', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': apiKey, 'X-Goog-FieldMask': 'places.id,places.displayName,places.location,places.types,places.formattedAddress' },
+                  body: JSON.stringify({
+                    textQuery,
+                    languageCode: 'en',
+                    regionCode: 'GB',
+                    pageSize: 5,
+                    rankPreference: 'RELEVANCE',
+                    locationBias: { circle: { center: { latitude: routeCenter.lat, longitude: routeCenter.lon }, radius: 5000 } }
+                  })
+                });
+                const body = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(`HTTP ${response.status}: ${body?.error?.message ?? response.statusText}`);
+                (body.places ?? []).forEach((place: any) => addPlace(place, 'Google Places Text Search'));
+              } catch (error) {
+                console.warn(`Google Places text search failed for ${textQuery}.`, error);
+              }
+            }
+            // Keep a verified address pin available even if Google returns no
+            // records for the known branch. The route filter still decides
+            // whether it belongs on this particular walk.
+            const alreadyNearby = [...found.values()].some((store) => {
+              const sameChain = store.name.toLowerCase().includes(target.chain);
+              const distance = Math.hypot((store.point.lat - target.point.lat) * 111_000, (store.point.lon - target.point.lon) * 111_000 * Math.cos(target.point.lat * Math.PI / 180));
+              return sameChain && distance <= 250;
+            });
+            if (!namedStores.length && !alreadyNearby) {
+              namedStores.push({
+                id: `verified-${target.key}`,
+                name: target.name,
+                point: target.point,
+                detourMeters: 0,
+                distanceFromRouteMeters: 0,
+                osmTags: { provider: 'Verified branch address', types: 'supermarket' },
+                assignedItemIds: []
+              });
+            }
+            const hasGoogleResults = namedStores.some((store) => store.osmTags.provider.startsWith('Google Places'));
+            await aiCacheSet(namedCacheKey, namedStores, hasGoogleResults ? 7 * 24 * 60 * 60 * 1000 : 6 * 60 * 60 * 1000);
           }
           (namedStores ?? []).forEach((store) => found.set(store.id, store));
         }
