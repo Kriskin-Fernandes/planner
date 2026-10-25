@@ -394,7 +394,7 @@ export const UserPreferencesSchema = z.object({
   warmthBias: z.number().min(-3).max(3).default(0),
   preferredUnits: z.enum(['metric', 'imperial']).default('metric'),
   dietaryPreferences: z.array(z.string()).default([]),
-  defaultTravelMode: TravelModeSchema.default('walking'),
+  defaultTravelMode: TravelModeSchema.default('public-transport'),
   preferredStores: z.array(z.string()).default([]),
   appearance: AppearancePrefsSchema.default({ build: 'average', hair: 'short-brown', skinTone: '#caa37b' }),
   laundryCorrections: z.record(z.string(), z.string()).default({}),
@@ -417,7 +417,7 @@ export const ApplicationSettingsSchema = z.object({
   overpassBaseUrl: z.string().default('https://overpass-api.de/api/interpreter'),
   photonBaseUrl: z.string().default('https://photon.komoot.io'),
   onboardingSeen: z.boolean().default(false),
-  homeAddress: z.string().default('69 Yeldham road'),
+  homeAddress: z.string().default('69 Yeldham Road, W6 8JQ'),
 });
 export type ApplicationSettings = z.infer<typeof ApplicationSettingsSchema>;
 

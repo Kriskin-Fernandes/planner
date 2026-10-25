@@ -516,14 +516,15 @@ const storeIcon = (color: string) =>
   });
 
 function compareCommonItems(totals: BasketRetailerTotal[]) {
-  let best: { matched: number; cheaper: string; dearer: string; saved: number } | null = null;
+  let best: { matched: number; cheaper: string; dearer: string; saved: number; cheaperTotal: number; dearerTotal: number; splitTotal: number } | null = null;
   for (let i = 0; i < totals.length; i++) for (let j = i + 1; j < totals.length; j++) {
     const left = totals[i]; const right = totals[j];
     const rightById = new Map(right.pricedItems.map((line) => [line.itemId, line]));
     const shared = left.pricedItems.filter((line) => rightById.has(line.itemId));
     const leftTotal = shared.reduce((sum, line) => sum + line.price, 0);
     const rightTotal = shared.reduce((sum, line) => sum + (rightById.get(line.itemId)?.price ?? 0), 0);
-    const comparison = { matched: shared.length, cheaper: leftTotal <= rightTotal ? left.retailer : right.retailer, dearer: leftTotal <= rightTotal ? right.retailer : left.retailer, saved: Math.abs(leftTotal - rightTotal) };
+    const splitTotal = shared.reduce((sum, line) => sum + Math.min(line.price, rightById.get(line.itemId)?.price ?? line.price), 0);
+    const comparison = { matched: shared.length, cheaper: leftTotal <= rightTotal ? left.retailer : right.retailer, dearer: leftTotal <= rightTotal ? right.retailer : left.retailer, saved: Math.abs(leftTotal - rightTotal), cheaperTotal: Math.min(leftTotal, rightTotal), dearerTotal: Math.max(leftTotal, rightTotal), splitTotal };
     if (shared.length && (!best || comparison.matched > best.matched || (comparison.matched === best.matched && comparison.saved > best.saved))) best = comparison;
   }
   return best;
@@ -537,7 +538,7 @@ const pinIcon = (color: string) =>
   });
 
 function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
-  const { shoppingItems, updateShoppingItem, settings, preferences, pushToast, tasks, calendarEvents } = useApp();
+  const { shoppingItems, updateShoppingItem, deleteShoppingItem, settings, preferences, pushToast, tasks, calendarEvents } = useApp();
   const todayKey = new Date().toDateString();
   const errandStops = [
     ...calendarEvents.filter((e) => new Date(e.start).toDateString() === todayKey).map((e) => ({ when: e.start, title: e.title, place: e.location || (e.locationTag ? preferences.locationTags[e.locationTag] : '') })),
@@ -546,7 +547,7 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
   const selectedDefault = errandStops.map((stop) => stop.place);
   const [startQuery, setStartQuery] = useState(settings.homeAddress || '69 Yeldham road');
   const [destQuery, setDestQuery] = useState(selectedDefault[selectedDefault.length - 1] || preferences.locationTags.Uni || 'Imperial College London');
-  const [travelMode, setTravelMode] = useState<TravelMode>(preferences.defaultTravelMode);
+  const [travelMode, setTravelMode] = useState<TravelMode>(preferences.defaultTravelMode === 'walking' ? 'public-transport' : preferences.defaultTravelMode);
   const [deadline, setDeadline] = useState('');
   const [corridor, setCorridor] = useState(600);
   const [stage, setStage] = useState<'form' | 'loading' | 'results'>('form');
@@ -630,7 +631,9 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
       for (const item of itemsToAllocate) {
         const price = comparison.priceByItem[item.id];
         if (price !== undefined) await updateShoppingItem(item.id, { estimatedPrice: price, priceSource: 'verified' });
+        else await deleteShoppingItem(item.id);
       }
+      setAllocation(allocateItemsToStores(itemsToAllocate.filter((item) => comparison.priceByItem[item.id] !== undefined), nearRoute, 2, 12));
       if (!comparison.totals.length) setPriceMessage('The price feed did not match these products today.');
     } catch (error) {
       setPriceTotals([]);
@@ -671,8 +674,7 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
           <div className="grid grid-cols-2 gap-3">
             <Field label="Travel mode">
               <Select value={travelMode} onChange={(e) => setTravelMode(e.target.value as TravelMode)}>
-                <option value="walking">Walking</option><option value="cycling">Cycling</option><option value="driving">Driving</option>
-                <option value="public-transport">Public transport (Google Maps directions)</option>
+                <option value="public-transport">Google Maps · public transport</option><option value="walking">Walking</option><option value="cycling">Cycling</option><option value="driving">Driving</option>
               </Select>
             </Field>
             <Field label="Shopping deadline (optional)"><TextInput type="datetime-local" value={deadline} onChange={(e) => setDeadline(e.target.value)} /></Field>
@@ -713,7 +715,7 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
             <p className="text-xs text-slate-500 mb-3">Google Maps opens with live route alternatives, including bus and train. The map below uses the street route for nearby shop discovery; use the Transit link for the actual public transport itinerary.</p>
           <Card className="p-4 mb-3 bg-emerald-50 border-emerald-100">
             <div className="flex items-center justify-between gap-2"><div><h3 className="font-semibold text-emerald-950">Supermarket price comparison</h3><p className="text-[11px] text-emerald-800">UK daily basket prices · {priceDate ? new Date(priceDate).toLocaleDateString() : 'latest feed'} · matched products only</p></div><Badge tone="green">£ GBP</Badge></div>
-            {priceTotals.length ? <div className="mt-3 space-y-2">{priceTotals.map((row) => <div key={row.retailer} className="flex items-center justify-between text-sm"><span className="capitalize font-medium text-slate-700">{row.retailer}</span><span className="text-slate-900">£{row.total.toFixed(2)} <span className="text-[11px] text-slate-500">({row.matched}/{row.totalItems} matched)</span></span></div>)}{savingsComparison && <div className="rounded-lg bg-white/70 p-2 text-xs font-semibold text-emerald-900">Save £{savingsComparison.saved.toFixed(2)} by choosing {savingsComparison.cheaper} over {savingsComparison.dearer} for the {savingsComparison.matched} items both prices matched.</div>}<p className="text-[10px] text-emerald-900 mt-2">Best available public listing per item, national prices; this does not identify prices at the nearby branch. Source: <a className="underline" href="https://apify.com/yappman/uk-supermarket-price-scraper" target="_blank" rel="noreferrer">Yappman Data daily UK grocery price dataset</a>. Prices are saved to matched shopping list items.</p></div> : <p className="text-xs text-emerald-900 mt-3">{priceMessage || 'No matching products in the daily feed.'}</p>}
+            {priceTotals.length ? <div className="mt-3 space-y-2"><p className="text-xs font-semibold text-emerald-950">Store subtotals · matched items</p>{priceTotals.map((row) => <div key={row.retailer} className="flex items-center justify-between text-sm"><span className="capitalize font-medium text-slate-700">{row.retailer}</span><span className="text-slate-900">£{row.total.toFixed(2)} <span className="text-[11px] text-slate-500">({row.matched}/{row.totalItems} matched)</span></span></div>)}{savingsComparison && <div className="rounded-lg bg-white/70 p-2 text-xs font-semibold text-emerald-900">Split total £{savingsComparison.splitTotal.toFixed(2)} vs {savingsComparison.cheaper} at £{savingsComparison.cheaperTotal.toFixed(2)} · save £{(savingsComparison.cheaperTotal - savingsComparison.splitTotal).toFixed(2)}. The split uses the lowest listed price per item.</div>}<div className="flex justify-between text-xs text-emerald-900"><span>Service charge (in-store collection)</span><span>£0.00</span></div><p className="text-[10px] text-emerald-900 mt-2">Matched prices are used for the split subtotal; unmatched products are removed from the list. Source: <a className="underline" href="https://apify.com/yappman/uk-supermarket-price-scraper" target="_blank" rel="noreferrer">Yappman Data daily UK grocery price dataset</a>.</p></div> : <p className="text-xs text-emerald-900 mt-3">{priceMessage || 'No matching products in the daily feed.'}</p>}
           </Card>
           <div className="h-64 rounded-xl overflow-hidden mb-3 border border-slate-200">
             <MapContainer center={center} zoom={13} style={{ height: '100%', width: '100%' }} scrollWheelZoom={false}>
@@ -742,6 +744,7 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
                       <p className="font-medium text-slate-800">{store.name}</p>
                       <Badge tone="indigo">{Math.round(store.distanceFromRouteMeters)}m off-route</Badge>
                     </div>
+                    <p className="text-xs font-semibold text-emerald-800 mb-2">Store subtotal · £{assignedIds.reduce((sum, id) => sum + (pendingItems.find((item) => item.id === id)?.estimatedPrice ?? 0), 0).toFixed(2)}</p>
                     <p className="text-xs text-slate-400 mb-2">{store.osmTags.shop ? `OSM shop=${store.osmTags.shop}` : 'OpenStreetMap place'}</p>
                     {assignedIds.length === 0 ? (
                       <p className="text-xs text-slate-400">No items assigned to this stop.</p>

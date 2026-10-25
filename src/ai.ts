@@ -95,7 +95,8 @@ function classifyGeminiError(err: unknown): AiErrorType {
   if (/api key not valid|401|permission_denied|403/i.test(msg)) return 'invalid-key';
   if (/429|resource_exhausted|quota/i.test(msg)) return 'quota';
   if (/failed to fetch|network|ENOTFOUND|ECONNREFUSED/i.test(msg)) return 'network';
-  if (/model.*not found|unavailable|503/i.test(msg)) return 'unavailable';
+  if (/model.*not found|not found|unavailable|503|404/i.test(msg)) return 'unavailable';
+  if (/HTTP 400|invalid argument/i.test(msg)) return 'invalid-response';
   return 'unknown';
 }
 
@@ -112,23 +113,24 @@ async function callGeminiJson<T>(
     return { status: 'error', provider: 'gemini', errorType: 'no-key', message: 'No Gemini API key configured.' };
   }
   try {
-    const { GoogleGenAI } = await import('@google/genai');
-    const ai = new GoogleGenAI({ apiKey });
-
-    const parts: any[] = [{ text: promptText }];
+    const parts: Array<Record<string, unknown>> = [{ text: promptText }];
     if (imageBlob) {
       const compressed = await compressImageForUpload(imageBlob);
       const base64 = await blobToBase64(compressed);
       parts.push({ inlineData: { mimeType: 'image/jpeg', data: base64 } });
     }
 
-    const response = await ai.models.generateContent({
-      model,
-      contents: [{ role: 'user', parts }],
-      config: { responseMimeType: 'application/json' }
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ role: 'user', parts }], generationConfig: { responseMimeType: 'application/json' } })
     });
-
-    const text = response.text;
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(`Gemini API HTTP ${response.status}: ${body?.error?.message ?? body?.error?.status ?? response.statusText}`);
+      Object.assign(error, { status: response.status });
+      throw error;
+    }
+    const text = body?.candidates?.[0]?.content?.parts?.map((part: { text?: string }) => part.text ?? '').join('');
     if (!text) {
       return { status: 'error', provider: 'gemini', errorType: 'invalid-response', message: 'Empty response from Gemini.' };
     }

@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // Wardrobe area: Clothes, Outfits (default) and Laundry tabs.
 // ---------------------------------------------------------------------------
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Shirt, Plus, Search, SlidersHorizontal, Star, Heart, Sparkles, Cpu, Camera, Image as ImageIcon,
   Trash2, Wand2, Thermometer, Droplets, X, Shuffle, WashingMachine, AlertTriangle, CheckCircle2, User as UserIcon
@@ -629,6 +629,21 @@ function OutfitPickerSheet({ onClose, onEdit }: { onClose: () => void; onEdit: (
   const [text, setText] = useState('');
   const [temp, setTemp] = useState(15);
   const [rain, setRain] = useState(false);
+  const [weatherLoaded, setWeatherLoaded] = useState(false);
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const geo = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(settings.homeAddress)}&limit=1`).then((r) => r.json());
+        const coordinates = geo?.features?.[0]?.geometry?.coordinates;
+        if (!coordinates) return;
+        const forecast = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${coordinates[1]}&longitude=${coordinates[0]}&current=temperature_2m,precipitation,weather_code`).then((r) => r.json());
+        if (active && forecast.current) { setTemp(Math.round(forecast.current.temperature_2m)); setRain(forecast.current.precipitation > 0 || forecast.current.weather_code >= 51); }
+      } catch { /* Slider remains available with a comfortable default. */ }
+      finally { if (active) setWeatherLoaded(true); }
+    })();
+    return () => { active = false; };
+  }, [settings.homeAddress]);
   const [loading, setLoading] = useState(false);
   const [provider, setProvider] = useState<'local' | 'gemini' | null>(null);
   const [results, setResults] = useState<ReturnType<typeof recommendOutfits>>([]);
@@ -690,7 +705,7 @@ function OutfitPickerSheet({ onClose, onEdit }: { onClose: () => void; onEdit: (
         <TextArea rows={2} value={text} onChange={(e) => setText(e.target.value)} placeholder="Describe your outfit needs…" />
       </Field>
       <div className="grid grid-cols-2 gap-3 mb-2">
-        <Field label={`Temperature: ${temp}°C`} hint="Manual input — no live weather API is configured.">
+        <Field label={`Temperature: ${temp}°C`} hint={weatherLoaded ? 'Live home weather loaded. Adjust the slider for another temperature.' : 'Loading current home weather…'}>
           <input type="range" min={-10} max={35} value={temp} onChange={(e) => setTemp(Number(e.target.value))} className="w-full" />
         </Field>
         <Field label="Rain expected">
@@ -704,10 +719,14 @@ function OutfitPickerSheet({ onClose, onEdit }: { onClose: () => void; onEdit: (
       <div className="space-y-3">
         {results.map((r, i) => (
           <Card key={i} className="p-3">
-            <div className="flex gap-2 mb-2">
-              {r.garments.map((g) => (
-                <div key={g.id} className="h-14 w-14 rounded-lg overflow-hidden"><BlobImage blobKey={g.images[0]?.blobKey} url={g.images[0]?.url} alt={g.name} className="w-full h-full" /></div>
-              ))}
+            <div className="relative mb-3 min-h-64 flex flex-col items-center justify-center gap-1 rounded-xl bg-gradient-to-b from-stone-50 to-slate-100 py-4">
+              <div className="absolute top-4 h-12 w-12 rounded-full border-2 border-slate-300 bg-white/70" />
+              <div className="absolute top-16 h-40 w-28 rounded-[45%_45%_20%_20%] border-2 border-slate-300/70 bg-white/40" />
+              <div className="relative z-10 flex flex-col items-center gap-1 pt-2">
+                {r.garments.slice(0, 5).map((g) => (
+                  <div key={g.id} className="h-12 w-24 overflow-hidden rounded-lg border border-white shadow-sm"><BlobImage blobKey={g.images[0]?.blobKey} url={g.images[0]?.url} alt={g.name} className="w-full h-full" /></div>
+                ))}
+              </div>
             </div>
             <div className="flex items-center gap-1.5 flex-wrap mb-2">
               <Badge tone="indigo">{r.metrics.colorHarmony}% harmony</Badge>

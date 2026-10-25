@@ -193,19 +193,18 @@ export function buildSeedOutfit(garments: Garment[]): Outfit | null {
 }
 
 export async function buildSeedFood(): Promise<FoodItem[]> {
-  const defs: Array<{ name: keyof typeof FOOD_PHOTOS; days: number; qty: number; unit: string; loc: FoodItem['storageLocation']; certainty: FoodItem['dateCertainty'] }> = [
-    { name: 'Tomato', days: 5, qty: 4, unit: 'pcs', loc: 'fridge', certainty: 'use-by' },
-    { name: 'Spinach', days: 3, qty: 1, unit: 'bag', loc: 'fridge', certainty: 'use-by' },
-    { name: 'Porridge', days: 180, qty: 1, unit: 'pack', loc: 'cupboard', certainty: 'best-before' },
-    { name: 'Pasta', days: 300, qty: 1, unit: 'pack', loc: 'cupboard', certainty: 'best-before' },
-    { name: 'Oats', days: 365, qty: 1, unit: 'pack', loc: 'cupboard', certainty: 'best-before' },
-    { name: 'Milk', days: 3, qty: 1, unit: 'bottle', loc: 'fridge', certainty: 'use-by' },
-    { name: 'Heavy Cream', days: 5, qty: 1, unit: 'carton', loc: 'fridge', certainty: 'use-by' },
-    { name: 'Eggs', days: 14, qty: 6, unit: 'pcs', loc: 'fridge', certainty: 'best-before' },
-    { name: 'Chicken', days: 2, qty: 500, unit: 'g', loc: 'fridge', certainty: 'use-by' },
-    { name: 'Chicken Pasta', days: 2, qty: 1, unit: 'meal', loc: 'fridge', certainty: 'use-by' },
-    { name: 'Cheese', days: 20, qty: 1, unit: 'pack', loc: 'fridge', certainty: 'use-by' },
-    { name: 'Bread', days: 5, qty: 1, unit: 'loaf', loc: 'cupboard', certainty: 'best-before' }
+  const defs: Array<{ name: keyof typeof FOOD_PHOTOS; days: number; qty: number; unit: string; loc: FoodItem['storageLocation']; certainty: FoodItem['dateCertainty']; nutrition: { calories: number; proteinG: number; carbsG: number; fatG: number; servingSize: string } }> = [
+    { name: 'Tomato', days: 5, qty: 4, unit: 'pcs', loc: 'fridge', certainty: 'use-by', nutrition: { calories: 18, proteinG: 0.9, carbsG: 3.9, fatG: 0.2, servingSize: '100 g' } },
+    { name: 'Spinach', days: 3, qty: 1, unit: 'bag', loc: 'fridge', certainty: 'use-by', nutrition: { calories: 23, proteinG: 2.9, carbsG: 3.6, fatG: 0.4, servingSize: '100 g' } },
+    { name: 'Pasta', days: 300, qty: 1, unit: 'pack', loc: 'cupboard', certainty: 'best-before', nutrition: { calories: 350, proteinG: 13, carbsG: 72, fatG: 1.5, servingSize: '100 g dry' } },
+    { name: 'Oats', days: 365, qty: 1, unit: 'pack', loc: 'cupboard', certainty: 'best-before', nutrition: { calories: 389, proteinG: 17, carbsG: 66, fatG: 7, servingSize: '100 g dry' } },
+    { name: 'Milk', days: 3, qty: 1, unit: 'bottle', loc: 'fridge', certainty: 'use-by', nutrition: { calories: 61, proteinG: 3.2, carbsG: 4.8, fatG: 3.3, servingSize: '100 ml' } },
+    { name: 'Heavy Cream', days: 5, qty: 1, unit: 'carton', loc: 'fridge', certainty: 'use-by', nutrition: { calories: 340, proteinG: 2.8, carbsG: 2.8, fatG: 36, servingSize: '100 ml' } },
+    { name: 'Eggs', days: 14, qty: 6, unit: 'pcs', loc: 'fridge', certainty: 'best-before', nutrition: { calories: 143, proteinG: 13, carbsG: 0.7, fatG: 9.5, servingSize: '100 g' } },
+    { name: 'Chicken', days: 2, qty: 500, unit: 'g', loc: 'fridge', certainty: 'use-by', nutrition: { calories: 165, proteinG: 31, carbsG: 0, fatG: 3.6, servingSize: '100 g cooked' } },
+    { name: 'Cheese', days: 20, qty: 1, unit: 'pack', loc: 'fridge', certainty: 'use-by', nutrition: { calories: 402, proteinG: 25, carbsG: 1.3, fatG: 33, servingSize: '100 g' } },
+    { name: 'Bread', days: 5, qty: 1, unit: 'loaf', loc: 'cupboard', certainty: 'best-before', nutrition: { calories: 247, proteinG: 13, carbsG: 41, fatG: 4.2, servingSize: '100 g' } },
+    { name: 'Flaxseeds', days: 365, qty: 1, unit: 'pack', loc: 'cupboard', certainty: 'best-before', nutrition: { calories: 534, proteinG: 18, carbsG: 29, fatG: 42, servingSize: '100 g' } }
   ];
   const out: FoodItem[] = [];
   for (const d of defs) {
@@ -220,6 +219,7 @@ export async function buildSeedFood(): Promise<FoodItem[]> {
       quantity: d.qty,
       unit: d.unit,
       estimatedRemainingFraction: 1,
+      nutrition: d.nutrition,
       storageLocation: d.loc,
       source: 'manual',
       userCorrected: false,
@@ -255,17 +255,25 @@ export async function buildSeedRecipes(): Promise<Recipe[]> {
       recurrence: { freq: 'none', interval: 1 },
       remainingServings: 0,
       tags: ['quick', 'dinner'],
+      nutrition: { calories: 620, proteinG: 42, carbsG: 64, fatG: 20, fiberG: 4, servingSize: 'per serving' },
       createdAt: nowIso(),
       updatedAt: nowIso()
+    },
+    {
+      id: newId(), name: 'Porridge', image: img('Porridge', FOOD_PHOTOS.Porridge) as any, servings: 1,
+      ingredients: [{ id: newId(), name: 'Oats', quantity: 50, unit: 'g', substitutes: [] }, { id: newId(), name: 'Milk', quantity: 200, unit: 'ml', substitutes: [] }],
+      steps: ['Simmer oats and milk together, stirring until creamy.', 'Serve warm with your favourite topping.'], prepMinutes: 8,
+      lastMadeAt: null, recurrence: { freq: 'none', interval: 1 }, remainingServings: 0, tags: ['breakfast', 'quick'],
+      nutrition: { calories: 290, proteinG: 12, carbsG: 43, fatG: 8, fiberG: 5, servingSize: 'per bowl' }, createdAt: nowIso(), updatedAt: nowIso()
     }
   ];
 }
 
 export function buildSeedShoppingItems(): ShoppingItem[] {
   return [
-    ['Tomato', 4, 'pcs'], ['Spinach', 1, 'bag'], ['Porridge', 1, 'pack'], ['Pasta', 1, 'pack'],
+    ['Tomato', 4, 'pcs'], ['Spinach', 1, 'bag'], ['Pasta', 1, 'pack'],
     ['Oats', 1, 'pack'], ['Milk', 1, 'bottle'], ['Heavy Cream', 1, 'carton'], ['Eggs', 6, 'pcs'],
-    ['Chicken', 500, 'g'], ['Chicken Pasta', 1, 'meal'], ['Cheese', 1, 'pack'], ['Bread', 1, 'loaf']
+    ['Chicken', 500, 'g'], ['Cheese', 1, 'pack'], ['Bread', 1, 'loaf'], ['Flaxseeds', 1, 'pack']
   ].map(([name, quantity, unit]) => ({
     id: newId(), name: String(name), quantity: Number(quantity), unit: String(unit), purchased: false,
     reason: 'manual', priceSource: 'unknown', estimatedPrice: null,

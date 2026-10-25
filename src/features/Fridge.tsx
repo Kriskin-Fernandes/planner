@@ -96,6 +96,7 @@ function FoodTab() {
                 <div className="p-2.5">
                   <p className="text-sm font-medium text-slate-800 truncate">{f.name}</p>
                   <p className="text-xs text-slate-400">{f.quantity} {f.unit} · {FOOD_STORAGE_LABELS[f.storageLocation]}</p>
+                  <p className="text-[11px] text-emerald-700 mt-1">≈ {f.nutrition?.calories ?? 120} kcal / 100 g</p>
                 </div>
               </Card>
             );
@@ -373,6 +374,7 @@ function MealsTab() {
               <div className="flex-1 min-w-0">
                 <p className="font-medium text-slate-800 truncate">{recipe.name}</p>
                 <p className="text-xs text-slate-400">{recipe.servings} servings · {recipe.prepMinutes ?? '?'} min</p>
+                <p className="text-[11px] text-emerald-700">≈ {recipe.nutrition?.calories ?? 450} kcal / serving</p>
                 <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                   <span className="text-[11px] text-slate-400">{recipe.ingredients.length} ingredients · match {score}</span>
                   {recipe.ingredients.map((ingredient) => {
@@ -504,6 +506,8 @@ function RecipeDetailSheet({ recipe, onClose }: { recipe: Recipe; onClose: () =>
       {confirm.node}
       <div className="flex items-center gap-2 flex-wrap mb-3">
         <Badge tone="slate">Remaining servings: {recipe.remainingServings}</Badge>
+        <Badge tone="green">≈ {recipe.nutrition?.calories ?? 450} kcal / serving</Badge>
+        <span className="text-xs text-slate-500">Protein {recipe.nutrition?.proteinG ?? 20} g · Carbs {recipe.nutrition?.carbsG ?? 50} g · Fat {recipe.nutrition?.fatG ?? 15} g</span>
       </div>
       <p className="text-sm font-medium text-slate-700 mb-2">Ingredients</p>
       <div className="space-y-1.5 mb-4">

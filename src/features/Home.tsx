@@ -11,7 +11,7 @@ export default function Home({ openPlanner }: { openPlanner: () => void }) {
   const [weather, setWeather] = useState<any>(null);
   const [weatherError, setWeatherError] = useState('');
   const today = new Date();
-  const dayTasks = useMemo(() => tasks.filter(t => !t.completed && t.dueAt && new Date(t.dueAt).toDateString() === today.toDateString()), [tasks]);
+  const dayTasks = useMemo(() => tasks.filter(t => !t.completed && (t.recurrence.freq === 'daily' || (t.dueAt && new Date(t.dueAt).toDateString() === today.toDateString()))), [tasks]);
   const todayEvents = useMemo(() => calendarEvents.filter(e => new Date(e.start).toDateString() === today.toDateString()), [calendarEvents]);
   const recommendation = useMemo(() => recommendOutfits(garments, { maxResults: 1 })[0], [garments]);
 

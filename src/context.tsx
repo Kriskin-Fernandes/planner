@@ -47,7 +47,7 @@ import {
   saveImageBlob,
   getImageBlob
 } from './db';
-import { applyWearToGarments, completeWash as completeWashTransform, consumeIngredients, reconcileShoppingList } from './services';
+import { applyWearToGarments, completeWash as completeWashTransform, consumeIngredients, reconcileShoppingList, icsToEvents } from './services';
 import { DEFAULT_LAUNDRY_GROUP_DEFS, buildSeedGarments, buildSeedOutfit, buildSeedFood, buildSeedRecipes, buildSeedShoppingItems, buildSeedTasks, buildSeedEvents } from './data';
 import { loadPersistedApiKeyIfAny } from './ai';
 
@@ -220,6 +220,69 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         await kvSet('calendar-defaults-removed', true);
       }
 
+      // Bring the supplied timetable into a fresh browser profile once.
+      if (!(await kvGet<boolean>('calendar-file-imported-v1'))) {
+        try {
+          const response = await fetch(`${import.meta.env.BASE_URL}calendar.ics`);
+          if (response.ok) {
+            const imported = icsToEvents(await response.text()).map((event) => ({ ...event, location: undefined, locationTag: 'Uni' }));
+            const present = new Set((await calendarEventsStore.all()).map((event) => `${event.title}|${event.start}`));
+            const additions = imported.filter((event) => !present.has(`${event.title}|${event.start}`));
+            if (additions.length) await calendarEventsStore.putMany(additions);
+          }
+        } catch (error) { console.warn('Calendar import could not be loaded', error); }
+        await kvSet('calendar-file-imported-v1', true);
+      }
+
+      // Add the requested errands and daily reminder once, including on existing installs.
+      if (!(await kvGet<boolean>('requested-tasks-v1'))) {
+        const existing = new Set((await tasksStore.all()).map((task) => task.title.toLowerCase()));
+        const now = new Date();
+        const makeTask = (title: string, location: string | undefined, recurrence: Task['recurrence'] = { freq: 'none', interval: 1 }): Task => ({
+          id: newId(), title, category: 'errand', dueAt: now.toISOString(), location, priority: 'medium', recurrence,
+          completed: false, completedAt: null, reminderMinutesBefore: [], linkedShoppingItemIds: [], classificationSource: 'user', createdAt: nowIso(), updatedAt: nowIso()
+        });
+        const requested = [
+          makeTask('Get medicine from Hammersmith Pharmacy', 'Hammersmith Pharmacy'),
+          makeTask('Get student ID from Imperial campus', undefined, { freq: 'none', interval: 1 }),
+          makeTask('Take vitamins', undefined, { freq: 'daily', interval: 1 })
+        ].filter((task) => !existing.has(task.title.toLowerCase()));
+        for (const task of requested) if (task.title.toLowerCase().includes('student id')) task.locationTag = 'Uni';
+        if (requested.length) await tasksStore.putMany(requested);
+        await kvSet('requested-tasks-v1', true);
+      }
+
+      const todayDate = new Date();
+      for (const task of await tasksStore.all()) {
+        if (task.recurrence.freq !== 'daily' || !task.dueAt || new Date(task.dueAt).toDateString() === todayDate.toDateString()) continue;
+        await tasksStore.put({ ...task, dueAt: todayDate.toISOString(), completed: false, completedAt: null, updatedAt: nowIso() });
+      }
+
+      // Replace only the old dish-as-ingredient entries with the proper meal records.
+      if (!(await kvGet<boolean>('meal-catalog-v2'))) {
+        for (const item of await shoppingItemsStore.all()) if (/^(porridge|chicken pasta)$/i.test(item.name.trim())) await shoppingItemsStore.remove(item.id);
+        for (const item of await foodItemsStore.all()) if (/^(porridge|chicken pasta)$/i.test(item.name.trim())) await foodItemsStore.remove(item.id);
+        if (!(await recipesStore.all()).some((recipe) => recipe.name === 'Porridge')) await recipesStore.putMany((await buildSeedRecipes()).filter((recipe) => recipe.name === 'Porridge'));
+        await kvSet('meal-catalog-v2', true);
+      }
+
+      if (!(await kvGet<boolean>('nutrition-estimates-v1'))) {
+        const ingredientNutrition: Record<string, NonNullable<FoodItem['nutrition']>> = {
+          tomato: { calories: 18, proteinG: 0.9, carbsG: 3.9, fatG: 0.2, servingSize: '100 g' }, spinach: { calories: 23, proteinG: 2.9, carbsG: 3.6, fatG: 0.4, servingSize: '100 g' },
+          pasta: { calories: 350, proteinG: 13, carbsG: 72, fatG: 1.5, servingSize: '100 g dry' }, oats: { calories: 389, proteinG: 17, carbsG: 66, fatG: 7, servingSize: '100 g dry' },
+          milk: { calories: 61, proteinG: 3.2, carbsG: 4.8, fatG: 3.3, servingSize: '100 ml' }, 'heavy cream': { calories: 340, proteinG: 2.8, carbsG: 2.8, fatG: 36, servingSize: '100 ml' },
+          eggs: { calories: 143, proteinG: 13, carbsG: 0.7, fatG: 9.5, servingSize: '100 g' }, chicken: { calories: 165, proteinG: 31, carbsG: 0, fatG: 3.6, servingSize: '100 g cooked' },
+          cheese: { calories: 402, proteinG: 25, carbsG: 1.3, fatG: 33, servingSize: '100 g' }, bread: { calories: 247, proteinG: 13, carbsG: 41, fatG: 4.2, servingSize: '100 g' }, flaxseeds: { calories: 534, proteinG: 18, carbsG: 29, fatG: 42, servingSize: '100 g' }
+        };
+        for (const food of await foodItemsStore.all()) if (!food.nutrition && ingredientNutrition[food.name.toLowerCase()]) await foodItemsStore.put({ ...food, nutrition: ingredientNutrition[food.name.toLowerCase()] });
+        const recipeNutrition: Record<string, NonNullable<Recipe['nutrition']>> = {
+          'chicken pasta': { calories: 620, proteinG: 42, carbsG: 64, fatG: 20, fiberG: 4, servingSize: 'per serving' },
+          porridge: { calories: 290, proteinG: 12, carbsG: 43, fatG: 8, fiberG: 5, servingSize: 'per bowl' }
+        };
+        for (const recipe of await recipesStore.all()) if (!recipe.nutrition && recipeNutrition[recipe.name.toLowerCase()]) await recipesStore.put({ ...recipe, nutrition: recipeNutrition[recipe.name.toLowerCase()] });
+        await kvSet('nutrition-estimates-v1', true);
+      }
+
       // Grow older installs' original small demo catalogue without disturbing
       // anything the user has edited or added.
       if (!(await kvGet<boolean>('catalog-v2-added'))) {
@@ -271,7 +334,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         const foodNames = new Set((await foodItemsStore.all()).map((f) => f.name));
         const photoFoods = (await buildSeedFood()).filter((f) => !foodNames.has(f.name));
         if (photoFoods.length) await foodItemsStore.putMany(photoFoods);
-        if (!(await recipesStore.all()).some((recipe) => recipe.name === 'Chicken Pasta')) await recipesStore.putMany(await buildSeedRecipes());
+        const existingRecipes = await recipesStore.all();
+        const recipeNames = new Set(existingRecipes.map((recipe) => recipe.name));
+        const recipeAdditions = (await buildSeedRecipes()).filter((recipe) => !recipeNames.has(recipe.name));
+        if (recipeAdditions.length) await recipesStore.putMany(recipeAdditions);
 
         const oldRecipeShoppingNames = new Set(['Wholemeal bread', 'Oat milk', 'Pasta', 'Tomatoes', 'Chickpeas', 'Spinach', 'Greek yogurt', 'Cheddar', 'Apples', 'Rice', 'Eggs']);
         for (const item of await shoppingItemsStore.all()) {
@@ -320,7 +386,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         tasks,
         reminders,
         preferences: preferencesRaw ? UserPreferencesSchema.parse(preferencesRaw) : s.preferences,
-        settings: settingsRaw ? ApplicationSettingsSchema.parse(settingsRaw) : s.settings
+        settings: settingsRaw ? ApplicationSettingsSchema.parse({ ...settingsRaw, homeAddress: settingsRaw.homeAddress === '69 Yeldham road' ? '69 Yeldham Road, W6 8JQ' : settingsRaw.homeAddress }) : s.settings
       }));
     })();
     return () => {
