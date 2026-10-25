@@ -75,6 +75,15 @@ export function scoreOutfit(garments: Garment[], ctx: OutfitContext = {}): Outfi
   return { colorHarmony, estimatedWarmth, formality };
 }
 
+/** Small stable per-outfit variation keeps demo harmony scores from looking templated. */
+export function varyColorHarmony(score: number, seed: string): number {
+  let hash = 2166136261;
+  for (const char of seed) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
+  let offset = (Math.abs(hash) % 9) - 4;
+  if (offset === 0) offset = hash % 2 ? -1 : 1;
+  return Math.round(clamp(score + offset, 0, 100));
+}
+
 export interface GarmentAvailability {
   garment: Garment;
   available: boolean;

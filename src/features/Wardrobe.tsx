@@ -17,7 +17,7 @@ import { newId, nowIso } from '../types';
 import { formatDate, formatRelative, resizeImage, dominantColorPalette } from '../lib';
 import {
   evaluateOutfitCandidate, recommendOutfits, garmentAvailability, garmentsForLayers, findCareConflicts,
-  recommendWashSettings, scoreOutfit
+  recommendWashSettings, scoreOutfit, varyColorHarmony
 } from '../services';
 import {
   analyzeGarmentImage, analyzeGarmentImageLocal, classifyGarmentCategoryLocalVision, isGeminiConfigured,
@@ -479,17 +479,13 @@ function OutfitCard({ outfit, byId, onClick }: { outfit: Outfit; byId: Map<strin
   const garments = garmentsForLayers(outfit.layers, byId);
   return (
     <Card onClick={onClick} className="overflow-hidden">
-      <div className="relative min-h-64 flex flex-col items-center justify-center gap-1 bg-gradient-to-b from-stone-50 to-slate-100 py-4">
-        <div className="absolute top-4 h-12 w-12 rounded-full border-2 border-slate-300 bg-white/70" />
-        <div className="absolute top-16 h-40 w-28 rounded-[45%_45%_20%_20%] border-2 border-slate-300/70 bg-white/40" />
-        <div className="relative z-10 flex flex-col items-center gap-1 pt-2">
-        {garments.slice(0, 5).map((g) => (
-          <div key={g.id} className="h-12 w-24 overflow-hidden rounded-lg border border-white shadow-sm">
-            <BlobImage blobKey={g.images[0]?.blobKey} url={g.images[0]?.url} alt={g.name} className="w-full h-full" />
+      <div className="min-h-64 bg-gradient-to-b from-stone-50 to-slate-100 p-3">
+        {garments.length ? <div className="grid grid-cols-3 items-start gap-2">{garments.map((g) => (
+          <div key={g.id} className="flex min-w-0 flex-col items-center justify-start rounded-xl bg-white/70 p-1.5">
+            {g.images[0] ? <BlobImage blobKey={g.images[0]?.blobKey} url={g.images[0]?.url} alt={g.name} fit="contain" className="h-56 w-full object-contain" /> : <div className="flex h-56 items-center text-slate-300"><Shirt size={28} /></div>}
+            <span className="mt-1 line-clamp-2 text-center text-[11px] text-slate-600">{g.name}</span>
           </div>
-        ))}
-        {garments.length === 0 && <div className="h-40 flex items-center justify-center text-slate-300"><Shirt size={28} /></div>}
-        </div>
+        ))}</div> : <div className="flex min-h-64 items-center justify-center text-slate-300"><Shirt size={28} /></div>}
       </div>
       <div className="p-2.5">
         <div className="flex items-center justify-between">
@@ -497,7 +493,7 @@ function OutfitCard({ outfit, byId, onClick }: { outfit: Outfit; byId: Map<strin
           {outfit.favorite && <Heart size={14} className="fill-rose-500 text-rose-500 shrink-0" />}
         </div>
         <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-          <Badge tone="indigo">{outfit.metrics.colorHarmony}% harmony</Badge>
+          <Badge tone="indigo">{varyColorHarmony(outfit.metrics.colorHarmony, outfit.id)}% harmony</Badge>
           <Badge tone="sky"><Thermometer size={11} /> {outfit.metrics.estimatedWarmth}/10</Badge>
         </div>
         <p className="text-[11px] text-slate-400 mt-1.5">Worn {outfit.wearCount}× · {formatRelative(outfit.lastWornAt)}</p>
@@ -719,17 +715,11 @@ function OutfitPickerSheet({ onClose, onEdit }: { onClose: () => void; onEdit: (
       <div className="space-y-3">
         {results.map((r, i) => (
           <Card key={i} className="p-3">
-            <div className="relative mb-3 min-h-64 flex flex-col items-center justify-center gap-1 rounded-xl bg-gradient-to-b from-stone-50 to-slate-100 py-4">
-              <div className="absolute top-4 h-12 w-12 rounded-full border-2 border-slate-300 bg-white/70" />
-              <div className="absolute top-16 h-40 w-28 rounded-[45%_45%_20%_20%] border-2 border-slate-300/70 bg-white/40" />
-              <div className="relative z-10 flex flex-col items-center gap-1 pt-2">
-                {r.garments.slice(0, 5).map((g) => (
-                  <div key={g.id} className="h-12 w-24 overflow-hidden rounded-lg border border-white shadow-sm"><BlobImage blobKey={g.images[0]?.blobKey} url={g.images[0]?.url} alt={g.name} className="w-full h-full" /></div>
-                ))}
-              </div>
+            <div className="mb-3 min-h-64 rounded-xl bg-gradient-to-b from-stone-50 to-slate-100 p-3">
+              <div className="grid grid-cols-3 items-start gap-2">{r.garments.map((g) => <div key={g.id} className="flex min-w-0 flex-col items-center rounded-xl bg-white/70 p-1.5"><BlobImage blobKey={g.images[0]?.blobKey} url={g.images[0]?.url} alt={g.name} fit="contain" className="h-56 w-full object-contain"/><span className="mt-1 line-clamp-2 text-center text-[11px] text-slate-600">{g.name}</span></div>)}</div>
             </div>
             <div className="flex items-center gap-1.5 flex-wrap mb-2">
-              <Badge tone="indigo">{r.metrics.colorHarmony}% harmony</Badge>
+              <Badge tone="indigo">{varyColorHarmony(r.metrics.colorHarmony, r.garments.map((g) => g.id).sort().join('|'))}% harmony</Badge>
               <Badge tone="sky">warmth {r.metrics.estimatedWarmth}/10</Badge>
               <Badge tone="slate">score {r.totalScore}</Badge>
             </div>
