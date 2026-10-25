@@ -197,7 +197,7 @@ async function findSupermarketsNearRouteUncached(route: GeoPoint[], corridorWidt
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': apiKey, 'X-Goog-FieldMask': 'places.id,places.displayName,places.location,places.types,places.formattedAddress' },
           body: JSON.stringify({
-            includedTypes: ['supermarket'],
+            includedTypes: ['supermarket', 'grocery_store', 'convenience_store', 'food_store'],
             maxResultCount: 20,
             rankPreference: 'DISTANCE',
             locationRestriction: { circle: { center: { latitude: point.lat, longitude: point.lon }, radius: Math.max(100, Math.min(500, corridorWidthMeters)) } }
