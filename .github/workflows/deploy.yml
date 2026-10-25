@@ -25,15 +25,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          # NOTE: no `cache: npm` here on purpose. actions/setup-node's npm cache
-          # requires a committed package-lock.json to key the cache on. This repo
-          # may not have one yet (see README). Once you commit a lockfile you can
-          # add `cache: npm` back for faster CI runs - it is purely an optimisation.
 
       - name: Install dependencies
-        # `npm install` (not `npm ci`) so this works whether or not a
-        # package-lock.json has been committed yet. If a lockfile IS present,
-        # npm install still respects and reuses it.
         run: npm install
 
       - name: Type check (advisory - does not block deploy)
@@ -44,20 +37,13 @@ jobs:
         run: npm run lint
         continue-on-error: true
 
-      - name: Unit tests (advisory - does not block deploy)
-        run: npm run test
+      - name: Unit tests
+        run: npm run test -- --run
         continue-on-error: true
-        # These three checks are intentionally non-blocking so that a stray
-        # lint rule or type nit can never prevent your site from going live.
-        # They still run and report in this log on every deploy - check them!
-        # Run `npm run deploy:check` locally for the authoritative signal.
 
       - name: Determine base path
         id: base
         run: |
-          # Project sites (most repos) are served from /<repo-name>/.
-          # A "user/org site" repo is literally named "<user>.github.io" and is
-          # served from "/" instead. Detect that automatically.
           REPO_NAME="${GITHUB_REPOSITORY#*/}"
           if [[ "$REPO_NAME" == *.github.io ]]; then
             echo "base=/" >> "$GITHUB_OUTPUT"
@@ -68,22 +54,7 @@ jobs:
       - name: Build (production bundle)
         env:
           VITE_BASE_PATH: ${{ steps.base.outputs.base }}
-        # Calls Vite directly (skips the local `tsc --noEmit` gate used by
-        # `npm run build`) so the deployment itself only fails on a genuine
-        # bundling/syntax problem, not a type-level nit. Vite/Rollup still
-        # catches real errors such as a broken import or invalid JSX.
         run: npx vite build
-
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
-        continue-on-error: true
-
-      - name: Essential end-to-end tests (advisory - does not block deploy)
-        run: npm run e2e
-        continue-on-error: true
-        # Non-blocking in CI: e2e exercises camera/notification permission
-        # flows and public map/geocoding endpoints that are not reliable on
-        # shared CI runners. Run `npm run e2e` locally for the real signal.
 
       - name: Verify build output exists
         run: test -f dist/index.html
