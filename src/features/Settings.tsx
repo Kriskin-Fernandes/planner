@@ -10,15 +10,18 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context';
 import { Sheet, Field, TextInput, Button, Toggle, Badge, useConfirm, Card } from '../components';
-import { setGeminiApiKey, clearGeminiApiKey, getGeminiApiKey, isGeminiConfigured } from '../ai';
+import { setGeminiApiKey, clearGeminiApiKey, getGeminiApiKey, isGeminiConfigured, classifyTaskWithGemini } from '../ai';
 
 export default function SettingsSheet({ onClose }: { onClose: () => void }) {
-  const { settings, updateSettings, pushToast, exportData, importData, resetAllData } = useApp();
+  const { settings, updateSettings, preferences, updatePreferences, pushToast, exportData, importData, resetAllData } = useApp();
   const confirm = useConfirm();
   const [keyInput, setKeyInput] = useState(getGeminiApiKey() ?? '');
   const [showKey, setShowKey] = useState(false);
   const [remember, setRemember] = useState(true);
   const [configured, setConfigured] = useState(isGeminiConfigured());
+  const [checkingGemini, setCheckingGemini] = useState(false);
+  const [newTag, setNewTag] = useState('');
+  const [newTagPlace, setNewTagPlace] = useState('');
   const [installPromptEvent, setInstallPromptEvent] = useState<any>(null);
   const fileRef = React.useRef<HTMLInputElement>(null);
 
@@ -44,6 +47,14 @@ export default function SettingsSheet({ onClose }: { onClose: () => void }) {
     setConfigured(false);
     updateSettings({ geminiRememberKey: false });
     pushToast('Gemini key removed', 'info');
+  }
+
+  async function testGemini() {
+    setCheckingGemini(true);
+    try {
+      const result = await classifyTaskWithGemini('Gemini connection check', settings.geminiModels.textModel);
+      pushToast(result.status === 'ok' ? `Gemini connected (${settings.geminiModels.textModel})` : `Gemini ${result.errorType}: ${result.message}`, result.status === 'ok' ? 'success' : 'error');
+    } finally { setCheckingGemini(false); }
   }
 
   async function requestNotifications() {
@@ -125,6 +136,7 @@ export default function SettingsSheet({ onClose }: { onClose: () => void }) {
         </label>
         <div className="flex gap-2 mb-3">
           <Button onClick={saveKey} disabled={!keyInput.trim()}>Save key</Button>
+          <Button variant="outline" onClick={testGemini} disabled={!configured || checkingGemini}>{checkingGemini ? 'Checking…' : 'Test Gemini connection'}</Button>
           {configured && <Button variant="outline" onClick={clearKey}>Clear key</Button>}
         </div>
         <div className="grid grid-cols-2 gap-3">
@@ -153,6 +165,10 @@ export default function SettingsSheet({ onClose }: { onClose: () => void }) {
         <div className="flex items-center gap-2 mb-2"><MapPin size={16} className="text-indigo-600"/><h3 className="font-semibold text-slate-800 text-sm">Home location & weather</h3></div>
         <p className="text-xs text-slate-500 mb-2">Your location is saved on this device for the Today page.</p>
         <TextInput value={settings.homeAddress} onChange={(e) => updateSettings({ homeAddress: e.target.value })} placeholder="Town, postcode, or address" />
+        <div className="mt-4"><p className="text-xs font-semibold text-slate-600 mb-2">Location tags used on calendar imports and route planning</p>
+          <div className="space-y-2">{Object.entries(preferences.locationTags).map(([tag, place]) => <div key={tag} className="grid grid-cols-[0.6fr_1.2fr_auto] gap-2 items-center"><span className="text-xs text-slate-600">{tag}</span><TextInput aria-label={`${tag} Google Maps place`} value={place} onChange={(e) => updatePreferences({ locationTags: { ...preferences.locationTags, [tag]: e.target.value } })} /><a className="text-[11px] text-indigo-600 underline whitespace-nowrap" target="_blank" rel="noreferrer" href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(place)}`}>Choose in Maps</a></div>)}</div>
+          <div className="grid grid-cols-[0.8fr_1.4fr_auto] gap-2 mt-2"><TextInput value={newTag} onChange={(e) => setNewTag(e.target.value)} placeholder="New tag"/><TextInput value={newTagPlace} onChange={(e) => setNewTagPlace(e.target.value)} placeholder="Google Maps place"/><Button size="sm" disabled={!newTag.trim() || !newTagPlace.trim()} onClick={async () => { await updatePreferences({ locationTags: { ...preferences.locationTags, [newTag.trim()]: newTagPlace.trim() } }); setNewTag(''); setNewTagPlace(''); }}>Add</Button></div>
+        </div>
       </section>
 
       {/* ---------------- Notifications ---------------- */}

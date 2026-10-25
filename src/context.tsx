@@ -212,6 +212,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
+      if (!(await kvGet<boolean>('calendar-defaults-removed'))) {
+        const seededDefaultTitles = new Set(['Linear Algebra Lecture', 'Study Group']);
+        for (const event of await calendarEventsStore.all()) {
+          if (seededDefaultTitles.has(event.title) && event.externalSource === 'local') await calendarEventsStore.remove(event.id);
+        }
+        await kvSet('calendar-defaults-removed', true);
+      }
+
       // Grow older installs' original small demo catalogue without disturbing
       // anything the user has edited or added.
       if (!(await kvGet<boolean>('catalog-v2-added'))) {
@@ -234,6 +242,47 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           if (additions.length) await shoppingItemsStore.putMany(additions);
         }
         await kvSet('catalog-v2-added', true);
+      }
+
+      if (!(await kvGet<boolean>('photo-catalog-v2-replaced'))) {
+        const legacyImage = (image?: { blobKey?: string; url?: string }) => !!image && (image.blobKey?.startsWith('seed-') === true || image.url?.includes('images.unsplash.com') === true);
+        const oldGarments = (await garmentsStore.all()).filter((g) => legacyImage(g.images[0]));
+        const oldGarmentIds = new Set(oldGarments.map((g) => g.id));
+        const allOutfits = await outfitsStore.all();
+        const demoOutfitIds = new Set(allOutfits.filter((o) => o.name === 'Campus Casual' && o.layers.some((layer) => layer.garmentIds.some((id) => oldGarmentIds.has(id)))).map((o) => o.id));
+        for (const outfitId of demoOutfitIds) await outfitsStore.remove(outfitId);
+        const customOutfitGarmentIds = new Set(allOutfits.filter((o) => !demoOutfitIds.has(o.id)).flatMap((o) => o.layers.flatMap((layer) => layer.garmentIds)));
+        for (const garment of oldGarments) if (!customOutfitGarmentIds.has(garment.id)) await garmentsStore.remove(garment.id);
+        const existingGarments = await garmentsStore.all();
+        const garmentNames = new Set(existingGarments.map((g) => g.name));
+        const photoGarments = (await buildSeedGarments()).filter((g) => !garmentNames.has(g.name));
+        if (photoGarments.length) await garmentsStore.putMany(photoGarments);
+        const allGarments = await garmentsStore.all();
+        if (!(await outfitsStore.all()).length) {
+          const starterOutfit = buildSeedOutfit(allGarments);
+          if (starterOutfit) await outfitsStore.put(starterOutfit);
+        }
+
+        const oldRecipes = (await recipesStore.all()).filter((r) => legacyImage(r.image));
+        for (const recipe of oldRecipes) await recipesStore.remove(recipe.id);
+        const remainingRecipeIngredients = new Set((await recipesStore.all()).flatMap((r) => r.ingredients.map((i) => i.name.toLowerCase().trim())));
+        const existingFood = await foodItemsStore.all();
+        for (const food of existingFood) if (legacyImage(food.image) && !remainingRecipeIngredients.has(food.name.toLowerCase().trim())) await foodItemsStore.remove(food.id);
+        const foodNames = new Set((await foodItemsStore.all()).map((f) => f.name));
+        const photoFoods = (await buildSeedFood()).filter((f) => !foodNames.has(f.name));
+        if (photoFoods.length) await foodItemsStore.putMany(photoFoods);
+        if (!(await recipesStore.all()).some((recipe) => recipe.name === 'Chicken Pasta')) await recipesStore.putMany(await buildSeedRecipes());
+
+        const oldRecipeShoppingNames = new Set(['Wholemeal bread', 'Oat milk', 'Pasta', 'Tomatoes', 'Chickpeas', 'Spinach', 'Greek yogurt', 'Cheddar', 'Apples', 'Rice', 'Eggs']);
+        for (const item of await shoppingItemsStore.all()) {
+          const oldGeneratedRecipeItem = item.reason === 'recipe' && item.priceSource === 'estimated' && oldRecipeShoppingNames.has(item.name);
+          const oldBananasDemo = item.name === 'Bananas' && item.reason === 'manual' && (item.priceSource === 'estimated' || item.priceSource === 'unknown');
+          if (oldGeneratedRecipeItem || oldBananasDemo) await shoppingItemsStore.remove(item.id);
+        }
+        const shoppingNames = new Set((await shoppingItemsStore.all()).map((i) => i.name));
+        const photoShopItems = buildSeedShoppingItems().filter((i) => !shoppingNames.has(i.name));
+        if (photoShopItems.length) await shoppingItemsStore.putMany(photoShopItems);
+        await kvSet('photo-catalog-v2-replaced', true);
       }
 
       const [garments, outfits, outfitFeedback, laundryGroups, washRecords, foodItems, recipes, mealPlans, shoppingItems, calendarEvents, tasks, reminders, preferencesRaw, settingsRaw] =

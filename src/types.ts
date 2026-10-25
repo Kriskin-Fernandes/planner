@@ -295,6 +295,7 @@ export const CalendarEventSchema = z.object({
   title: z.string().min(1),
   description: z.string().optional(),
   location: z.string().optional(),
+  locationTag: z.string().optional(),
   start: z.string(),
   end: z.string(),
   allDay: z.boolean().default(false),
@@ -317,6 +318,7 @@ export const TaskSchema = z.object({
   category: z.string().default('general'),
   dueAt: z.string().nullable().default(null),
   location: z.string().optional(),
+  locationTag: z.string().optional(),
   priority: TaskPrioritySchema.default('medium'),
   recurrence: RecurrenceSchema.default({ freq: 'none', interval: 1 }),
   completed: z.boolean().default(false),
@@ -396,6 +398,7 @@ export const UserPreferencesSchema = z.object({
   preferredStores: z.array(z.string()).default([]),
   appearance: AppearancePrefsSchema.default({ build: 'average', hair: 'short-brown', skinTone: '#caa37b' }),
   laundryCorrections: z.record(z.string(), z.string()).default({}),
+  locationTags: z.record(z.string(), z.string()).default({ Uni: 'Imperial College London' }),
 });
 export type UserPreferences = z.infer<typeof UserPreferencesSchema>;
 
@@ -414,7 +417,7 @@ export const ApplicationSettingsSchema = z.object({
   overpassBaseUrl: z.string().default('https://overpass-api.de/api/interpreter'),
   photonBaseUrl: z.string().default('https://photon.komoot.io'),
   onboardingSeen: z.boolean().default(false),
-  homeAddress: z.string().default(''),
+  homeAddress: z.string().default('69 Yeldham road'),
 });
 export type ApplicationSettings = z.infer<typeof ApplicationSettingsSchema>;
 

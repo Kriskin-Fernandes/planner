@@ -374,10 +374,11 @@ function MealsTab() {
                 <p className="font-medium text-slate-800 truncate">{recipe.name}</p>
                 <p className="text-xs text-slate-400">{recipe.servings} servings · {recipe.prepMinutes ?? '?'} min</p>
                 <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                  <Badge tone={overall === 'green' ? 'green' : overall === 'amber' ? 'amber' : 'rose'}>
-                    {overall === 'green' ? 'Ready to cook' : overall === 'amber' ? 'Low on some items' : 'Missing ingredients'}
-                  </Badge>
-                  <span className="text-[11px] text-slate-400">match score {score}</span>
+                  <span className="text-[11px] text-slate-400">{recipe.ingredients.length} ingredients · match {score}</span>
+                  {recipe.ingredients.map((ingredient) => {
+                    const state = perIngredient[ingredient.id];
+                    return <Badge key={ingredient.id} tone={state === 'green' ? 'green' : state === 'amber' ? 'amber' : 'rose'}>{ingredient.name}: {state === 'green' ? 'in stock' : state === 'amber' ? 'low stock' : 'need to buy'}</Badge>;
+                  })}
                 </div>
               </div>
             </Card>
@@ -502,7 +503,6 @@ function RecipeDetailSheet({ recipe, onClose }: { recipe: Recipe; onClose: () =>
     </>}>
       {confirm.node}
       <div className="flex items-center gap-2 flex-wrap mb-3">
-        <Badge tone={availability.overall === 'green' ? 'green' : availability.overall === 'amber' ? 'amber' : 'rose'}>{availability.overall === 'green' ? 'All ingredients available' : availability.overall === 'amber' ? 'Some low/uncertain' : 'Missing ingredients'}</Badge>
         <Badge tone="slate">Remaining servings: {recipe.remainingServings}</Badge>
       </div>
       <p className="text-sm font-medium text-slate-700 mb-2">Ingredients</p>
@@ -510,7 +510,7 @@ function RecipeDetailSheet({ recipe, onClose }: { recipe: Recipe; onClose: () =>
         {recipe.ingredients.map((ing) => (
           <div key={ing.id} className="flex items-center justify-between text-sm border border-slate-100 rounded-lg px-3 py-2">
             <span>{ing.name} — {ing.quantity} {ing.unit}</span>
-            <Badge tone={availability.perIngredient[ing.id] === 'green' ? 'green' : availability.perIngredient[ing.id] === 'amber' ? 'amber' : 'rose'}>{availability.perIngredient[ing.id]}</Badge>
+            <Badge tone={availability.perIngredient[ing.id] === 'green' ? 'green' : availability.perIngredient[ing.id] === 'amber' ? 'amber' : 'rose'}>{availability.perIngredient[ing.id] === 'green' ? 'in stock' : availability.perIngredient[ing.id] === 'amber' ? 'low stock' : 'need to buy'}</Badge>
           </div>
         ))}
       </div>
@@ -639,7 +639,7 @@ function ShoppingTab() {
                 <div className="flex items-center gap-1.5 mt-0.5">
                   <span className="text-xs text-slate-400">{item.quantity} {item.unit}</span>
                   <Badge tone={item.reason === 'recipe' ? 'indigo' : item.reason === 'low-stock' ? 'amber' : item.reason === 'expired-replace' ? 'rose' : 'slate'}>{item.reason.replace('-', ' ')}</Badge>
-                  {item.priceSource === 'unknown' ? <span className="text-[11px] text-slate-400">price unknown</span> : <span className="text-[11px] text-slate-500">~£${item.estimatedPrice}</span>}
+                  {item.priceSource === 'unknown' ? <span className="text-[11px] text-slate-400">price unknown</span> : <span className="text-[11px] text-slate-500">~£{item.estimatedPrice}</span>}
                 </div>
               </div>
               <IconButton icon={<Trash2 size={14} />} label="Remove" onClick={async () => { if (await confirm.ask(`Remove "${item.name}" from the list?`)) await deleteShoppingItem(item.id); }} />
@@ -666,4 +666,5 @@ function ShoppingTab() {
     </div>
   );
 }
+
 

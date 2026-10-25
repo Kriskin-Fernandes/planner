@@ -21,6 +21,7 @@ import { formatDate, formatDateTime, formatRelativeDays, daysUntil } from '../li
 import { detectClashes, expandEventOccurrences, eventsToIcs, icsToEvents, groupTasks, filterStoresNearRoute, allocateItemsToStores } from '../services';
 import { classifyTaskLocal, classifyTaskWithGemini, isGeminiConfigured } from '../ai';
 import { geocode, calculateRoute, findSupermarketsNearRoute, type GeocodeResult } from '../geo';
+import { compareUkBasket, type BasketRetailerTotal } from '../prices';
 
 type PlannerTab = 'schedule' | 'todo' | 'grouping';
 
@@ -47,9 +48,12 @@ export default function Planner() {
 // =============================== SCHEDULE =========================================
 
 function ScheduleTab() {
-  const { calendarEvents, importEvents, pushToast } = useApp();
+  const { calendarEvents, importEvents, preferences, updatePreferences, pushToast } = useApp();
   const [editing, setEditing] = useState<CalendarEvent | 'new' | null>(null);
   const [calendarView, setCalendarView] = useState<'day' | 'week' | 'month'>('month');
+  const [importBatch, setImportBatch] = useState<CalendarEvent[] | null>(null);
+  const [importTag, setImportTag] = useState('Uni');
+  const [importLocation, setImportLocation] = useState(preferences.locationTags.Uni ?? 'Imperial College London');
   const fileRef = React.useRef<HTMLInputElement>(null);
 
   const rangeStart = useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); if (calendarView === 'week') d.setDate(d.getDate() - d.getDay()); if (calendarView === 'month') { d.setDate(1); d.setDate(d.getDate() - d.getDay()); } return d; }, [calendarView]);
@@ -83,11 +87,21 @@ function ScheduleTab() {
         pushToast('No events found in that .ics file', 'error');
         return;
       }
-      await importEvents(events);
-      pushToast(`Imported ${events.length} event(s)`, 'success');
+      setImportBatch(events);
     } catch {
       pushToast('Could not read that .ics file', 'error');
     }
+  }
+
+  async function finishImport() {
+    if (!importBatch) return;
+    const tag = importTag.trim();
+    const location = importLocation.trim();
+    if (tag && location) await updatePreferences({ locationTags: { ...preferences.locationTags, [tag]: location } });
+    const events = importBatch.map((event) => ({ ...event, locationTag: tag || undefined, location: location || event.location }));
+    await importEvents(events);
+    pushToast(`Imported ${events.length} event(s)${tag ? ` with the ${tag} location tag` : ''}`, 'success');
+    setImportBatch(null);
   }
 
   return (
@@ -142,15 +156,22 @@ function ScheduleTab() {
       </div>
 
       {editing && <EventEditorSheet value={editing === 'new' ? null : editing} onClose={() => setEditing(null)} />}
+      {importBatch && <Sheet open onClose={() => setImportBatch(null)} title="Add a location tag to this import" footer={<Button onClick={finishImport}>Import {importBatch.length} events</Button>}>
+        <p className="text-sm text-slate-600 mb-3">Apply one location tag to every event in this calendar file, or leave the tag blank to keep each event’s original location.</p>
+        <Field label="Location tag"><TextInput value={importTag} onChange={(e) => { setImportTag(e.target.value); setImportLocation(preferences.locationTags[e.target.value] ?? ''); }} placeholder="e.g. Uni" /></Field>
+        <Field label="Place on Google Maps"><TextInput value={importLocation} onChange={(e) => setImportLocation(e.target.value)} placeholder="Imperial College London" /></Field>
+        <div className="flex flex-wrap gap-2">{Object.entries(preferences.locationTags).map(([tag, place]) => <button key={tag} onClick={() => { setImportTag(tag); setImportLocation(place); }} className="rounded-full bg-indigo-50 px-3 py-1.5 text-xs text-indigo-700">{tag} · {place}</button>)}</div>
+      </Sheet>}
     </div>
   );
 }
 
 function EventEditorSheet({ value, onClose }: { value: CalendarEvent | null; onClose: () => void }) {
-  const { addCalendarEvent, updateCalendarEvent, deleteCalendarEvent, pushToast } = useApp();
+  const { addCalendarEvent, updateCalendarEvent, deleteCalendarEvent, preferences, pushToast } = useApp();
   const confirm = useConfirm();
   const [title, setTitle] = useState(value?.title ?? '');
   const [location, setLocation] = useState(value?.location ?? '');
+  const [locationTag, setLocationTag] = useState(value?.locationTag ?? '');
   const [description, setDescription] = useState(value?.description ?? '');
   const [start, setStart] = useState(value ? toLocalInput(value.start) : toLocalInput(nowIso()));
   const [end, setEnd] = useState(value ? toLocalInput(value.end) : toLocalInput(new Date(Date.now() + 3600000).toISOString()));
@@ -165,7 +186,8 @@ function EventEditorSheet({ value, onClose }: { value: CalendarEvent | null; onC
     }
     const base = {
       title: title.trim(),
-      location: location || undefined,
+      location: location || (locationTag ? preferences.locationTags[locationTag] : undefined),
+      locationTag: locationTag || undefined,
       description: description || undefined,
       start: new Date(start).toISOString(),
       end: new Date(end).toISOString(),
@@ -203,6 +225,7 @@ function EventEditorSheet({ value, onClose }: { value: CalendarEvent | null; onC
       {confirm.node}
       <Field label="Title"><TextInput value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Linear Algebra Lecture" /></Field>
       <Field label="Location (optional)"><TextInput value={location} onChange={(e) => setLocation(e.target.value)} placeholder="e.g. Maths Building, Room 204" /></Field>
+      <Field label="Location tag (optional)"><Select value={locationTag} onChange={(e) => { setLocationTag(e.target.value); if (e.target.value) setLocation(preferences.locationTags[e.target.value] ?? ''); }}><option value="">No tag</option>{Object.keys(preferences.locationTags).map((tag) => <option key={tag} value={tag}>{tag}</option>)}</Select></Field>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Starts"><TextInput type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} /></Field>
         <Field label="Ends"><TextInput type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)} /></Field>
@@ -350,13 +373,14 @@ function TodoTab() {
 }
 
 function TaskEditorSheet({ value, onClose }: { value: Task | null; onClose: () => void }) {
-  const { addTask, updateTask, deleteTask, pushToast } = useApp();
+  const { addTask, updateTask, deleteTask, preferences, pushToast } = useApp();
   const confirm = useConfirm();
   const [title, setTitle] = useState(value?.title ?? '');
   const [description, setDescription] = useState(value?.description ?? '');
   const [category, setCategory] = useState(value?.category ?? 'general');
   const [dueAt, setDueAt] = useState(value?.dueAt ? toLocalInput(value.dueAt) : '');
   const [location, setLocation] = useState(value?.location ?? '');
+  const [locationTag, setLocationTag] = useState(value?.locationTag ?? '');
   const [priority, setPriority] = useState<TaskPriority>(value?.priority ?? 'medium');
   const [freq, setFreq] = useState<Recurrence['freq']>(value?.recurrence.freq ?? 'none');
   const [reminderMins, setReminderMins] = useState<number>(value?.reminderMinutesBefore[0] ?? 0);
@@ -371,7 +395,8 @@ function TaskEditorSheet({ value, onClose }: { value: Task | null; onClose: () =
       description: description || undefined,
       category,
       dueAt: dueAt ? new Date(dueAt).toISOString() : null,
-      location: location || undefined,
+      location: location || (locationTag ? preferences.locationTags[locationTag] : undefined),
+      locationTag: locationTag || undefined,
       priority,
       recurrence: { freq, interval: 1 } as Recurrence,
       reminderMinutesBefore: reminderMins > 0 ? [reminderMins] : [],
@@ -416,6 +441,7 @@ function TaskEditorSheet({ value, onClose }: { value: Task | null; onClose: () =
       <div className="grid grid-cols-2 gap-3">
         <Field label="Due (optional)"><TextInput type="datetime-local" value={dueAt} onChange={(e) => setDueAt(e.target.value)} /></Field>
         <Field label="Location (optional)"><TextInput value={location} onChange={(e) => setLocation(e.target.value)} /></Field>
+        <Field label="Location tag (optional)"><Select value={locationTag} onChange={(e) => { setLocationTag(e.target.value); if (e.target.value) setLocation(preferences.locationTags[e.target.value] ?? ''); }}><option value="">No tag</option>{Object.keys(preferences.locationTags).map((tag) => <option key={tag} value={tag}>{tag}</option>)}</Select></Field>
       </div>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Repeats">
@@ -488,6 +514,20 @@ const storeIcon = (color: string) =>
     iconSize: [16, 16],
     iconAnchor: [8, 8]
   });
+
+function compareCommonItems(totals: BasketRetailerTotal[]) {
+  let best: { matched: number; cheaper: string; dearer: string; saved: number } | null = null;
+  for (let i = 0; i < totals.length; i++) for (let j = i + 1; j < totals.length; j++) {
+    const left = totals[i]; const right = totals[j];
+    const rightById = new Map(right.pricedItems.map((line) => [line.itemId, line]));
+    const shared = left.pricedItems.filter((line) => rightById.has(line.itemId));
+    const leftTotal = shared.reduce((sum, line) => sum + line.price, 0);
+    const rightTotal = shared.reduce((sum, line) => sum + (rightById.get(line.itemId)?.price ?? 0), 0);
+    const comparison = { matched: shared.length, cheaper: leftTotal <= rightTotal ? left.retailer : right.retailer, dearer: leftTotal <= rightTotal ? right.retailer : left.retailer, saved: Math.abs(leftTotal - rightTotal) };
+    if (shared.length && (!best || comparison.matched > best.matched || (comparison.matched === best.matched && comparison.saved > best.saved))) best = comparison;
+  }
+  return best;
+}
 const pinIcon = (color: string) =>
   L.divIcon({
     className: '',
@@ -497,9 +537,15 @@ const pinIcon = (color: string) =>
   });
 
 function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
-  const { shoppingItems, updateShoppingItem, settings, preferences, pushToast } = useApp();
-  const [startQuery, setStartQuery] = useState('');
-  const [destQuery, setDestQuery] = useState('');
+  const { shoppingItems, updateShoppingItem, settings, preferences, pushToast, tasks, calendarEvents } = useApp();
+  const todayKey = new Date().toDateString();
+  const errandStops = [
+    ...calendarEvents.filter((e) => new Date(e.start).toDateString() === todayKey).map((e) => ({ when: e.start, title: e.title, place: e.location || (e.locationTag ? preferences.locationTags[e.locationTag] : '') })),
+    ...tasks.filter((t) => !t.completed && t.dueAt && new Date(t.dueAt).toDateString() === todayKey).map((t) => ({ when: t.dueAt!, title: t.title, place: t.location || (t.locationTag ? preferences.locationTags[t.locationTag] : '') }))
+  ].filter((stop) => stop.place).sort((a, b) => a.when.localeCompare(b.when)).filter((stop, index, all) => all.findIndex((other) => other.place.toLowerCase() === stop.place.toLowerCase()) === index);
+  const selectedDefault = errandStops.map((stop) => stop.place);
+  const [startQuery, setStartQuery] = useState(settings.homeAddress || '69 Yeldham road');
+  const [destQuery, setDestQuery] = useState(selectedDefault[selectedDefault.length - 1] || preferences.locationTags.Uni || 'Imperial College London');
   const [travelMode, setTravelMode] = useState<TravelMode>(preferences.defaultTravelMode);
   const [deadline, setDeadline] = useState('');
   const [corridor, setCorridor] = useState(600);
@@ -511,6 +557,10 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
   const [routeDistanceM, setRouteDistanceM] = useState(0);
   const [stores, setStores] = useState<StoreCandidate[]>([]);
   const [allocation, setAllocation] = useState<Record<string, string[]>>({});
+  const [priceTotals, setPriceTotals] = useState<BasketRetailerTotal[]>([]);
+  const [priceDate, setPriceDate] = useState<string | null>(null);
+  const [priceMessage, setPriceMessage] = useState('');
+  const [selectedStopPlaces, setSelectedStopPlaces] = useState<Set<string>>(new Set(selectedDefault));
 
   const pendingItems = shoppingItems.filter((i) => !i.purchased);
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set(pendingItems.map((i) => i.id)));
@@ -533,36 +583,59 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
     setStatusMsg('Finding start location…');
     const startPt = await geocodeOne(startQuery, 'start');
     if (!startPt) { setStage('form'); return; }
-    setStatusMsg('Finding destination…');
-    const destPt = await geocodeOne(destQuery, 'destination');
-    if (!destPt) { setStage('form'); return; }
-    setStart(startPt);
-    setDestination(destPt);
-
-    setStatusMsg('Calculating route (OSRM)…');
-    const route = await calculateRoute(startPt, destPt, travelMode);
-    if (route.status !== 'ok') {
-      pushToast(route.message, 'error');
-      setStage('form');
-      return;
+    const dailyPlaces = errandStops.map((stop) => stop.place).filter((place) => selectedStopPlaces.has(place));
+    const routeAddresses = [...dailyPlaces, ...(dailyPlaces[dailyPlaces.length - 1]?.toLowerCase() === destQuery.trim().toLowerCase() ? [] : [destQuery.trim()])];
+    setStatusMsg('Calculating your home-to-stops route…');
+    let legStart = startPt;
+    let geometry: GeoPoint[] = [];
+    let distance = 0;
+    let finalPoint: GeoPoint | null = null;
+    for (let index = 0; index < routeAddresses.length; index++) {
+      const address = routeAddresses[index];
+      const next = await geocodeOne(address, `stop ${index + 1}`);
+      if (!next) { setStage('form'); return; }
+      const route = await calculateRoute(legStart, next, travelMode);
+      if (route.status !== 'ok') { pushToast(route.message, 'error'); setStage('form'); return; }
+      geometry = [...geometry, ...route.data.geometry.slice(geometry.length ? 1 : 0)];
+      distance += route.data.distanceMeters;
+      legStart = next;
+      finalPoint = next;
     }
-    setRouteGeometry(route.data.geometry);
-    setRouteDistanceM(route.data.distanceMeters);
+    if (!finalPoint) { setStage('form'); return; }
+    setStart(startPt);
+    setDestination(finalPoint);
+    setRouteGeometry(geometry);
+    setRouteDistanceM(distance);
 
     setStatusMsg('Finding supermarkets near the route (Overpass / OpenStreetMap)…');
-    const found = await findSupermarketsNearRoute(route.data.geometry, corridor);
+    const found = await findSupermarketsNearRoute(geometry, corridor);
     if (found.status !== 'ok') {
       pushToast(found.message, 'error');
       setStage('form');
       return;
     }
-    const nearRoute = filterStoresNearRoute(found.data, route.data.geometry, corridor);
+    const nearRoute = filterStoresNearRoute(found.data, geometry, corridor);
     if (nearRoute.length === 0) {
       pushToast('No supermarkets found within the corridor of this route. Try widening the corridor or adjusting the route.', 'info');
     }
     setStores(nearRoute);
     const itemsToAllocate = pendingItems.filter((i) => selectedItemIds.has(i.id));
     setAllocation(allocateItemsToStores(itemsToAllocate, nearRoute, 2, 12));
+    setStatusMsg('Comparing today’s UK supermarket prices…');
+    try {
+      const comparison = await compareUkBasket(itemsToAllocate);
+      setPriceTotals(comparison.totals);
+      setPriceDate(comparison.latestAt);
+      setPriceMessage('');
+      for (const item of itemsToAllocate) {
+        const price = comparison.priceByItem[item.id];
+        if (price !== undefined) await updateShoppingItem(item.id, { estimatedPrice: price, priceSource: 'verified' });
+      }
+      if (!comparison.totals.length) setPriceMessage('The price feed did not match these products today.');
+    } catch (error) {
+      setPriceTotals([]);
+      setPriceMessage(error instanceof Error ? error.message : 'Grocery prices are temporarily unavailable.');
+    }
     setStage('results');
   }
 
@@ -584,15 +657,17 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
   }
 
   const center: [number, number] = start ? [start.lat, start.lon] : [51.505, -0.09];
+  const savingsComparison = compareCommonItems(priceTotals);
 
   return (
     <Sheet open onClose={onClose} title="Smart Shopping" wide footer={stage === 'results' ? <Button onClick={confirmPlan}>Confirm allocation</Button> : undefined}>
       {stage === 'form' && (
         <div>
           <div className="grid grid-cols-1 gap-3">
-            <Field label="Start location"><TextInput value={startQuery} onChange={(e) => setStartQuery(e.target.value)} placeholder="e.g. your dorm address" /></Field>
-            <Field label="Destination"><TextInput value={destQuery} onChange={(e) => setDestQuery(e.target.value)} placeholder="e.g. campus library" /></Field>
+          <Field label="Start location"><TextInput value={startQuery} onChange={(e) => setStartQuery(e.target.value)} placeholder="Home address" /></Field>
+            <Field label="Destination"><TextInput value={destQuery} onChange={(e) => setDestQuery(e.target.value)} placeholder="Today’s next location" /></Field>
           </div>
+          {errandStops.length > 0 && <div className="my-3 rounded-xl bg-indigo-50 p-3"><p className="text-xs font-semibold text-indigo-900 mb-2">Add today’s tasks and calendar stops</p><div className="space-y-2">{errandStops.map((stop) => <label key={`${stop.title}-${stop.place}`} className="flex items-center gap-2 text-xs text-indigo-900"><input type="checkbox" checked={selectedStopPlaces.has(stop.place)} onChange={() => setSelectedStopPlaces((old) => { const next = new Set(old); if (next.has(stop.place)) next.delete(stop.place); else next.add(stop.place); return next; })}/><span>{stop.title} · {stop.place}</span></label>)}</div></div>}
           <div className="grid grid-cols-2 gap-3">
             <Field label="Travel mode">
               <Select value={travelMode} onChange={(e) => setTravelMode(e.target.value as TravelMode)}>
@@ -633,9 +708,13 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
       {stage === 'results' && (
         <div>
             <div className="flex flex-wrap gap-2 mb-3">
-              {(['transit', 'walking', 'bicycling', 'driving'] as const).map((mode) => <a key={mode} className="px-3 py-2 rounded-xl bg-indigo-50 text-indigo-700 text-xs font-medium" target="_blank" rel="noreferrer" href={`https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(startQuery)}&destination=${encodeURIComponent(destQuery)}&travelmode=${mode}`}>{mode === 'transit' ? 'Google Maps · Transit' : `Google Maps · ${mode}`}</a>)}
+              {(['transit', 'walking', 'bicycling', 'driving'] as const).map((mode) => { const waypoints = errandStops.map((stop) => stop.place).filter((place) => selectedStopPlaces.has(place) && place.toLowerCase() !== destQuery.toLowerCase()); return <a key={mode} className="px-3 py-2 rounded-xl bg-indigo-50 text-indigo-700 text-xs font-medium" target="_blank" rel="noreferrer" href={`https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(startQuery)}&destination=${encodeURIComponent(destQuery)}${waypoints.length ? `&waypoints=${encodeURIComponent(waypoints.join('|'))}` : ''}&travelmode=${mode}`}>{mode === 'transit' ? 'Google Maps · Transit' : `Google Maps · ${mode}`}</a>; })}
             </div>
-            <p className="text-xs text-slate-500 mb-3">Google Maps opens with live route alternatives, including bus and train connections. The map below finds nearby shops along the selected route.</p>
+            <p className="text-xs text-slate-500 mb-3">Google Maps opens with live route alternatives, including bus and train. The map below uses the street route for nearby shop discovery; use the Transit link for the actual public transport itinerary.</p>
+          <Card className="p-4 mb-3 bg-emerald-50 border-emerald-100">
+            <div className="flex items-center justify-between gap-2"><div><h3 className="font-semibold text-emerald-950">Supermarket price comparison</h3><p className="text-[11px] text-emerald-800">UK daily basket prices · {priceDate ? new Date(priceDate).toLocaleDateString() : 'latest feed'} · matched products only</p></div><Badge tone="green">£ GBP</Badge></div>
+            {priceTotals.length ? <div className="mt-3 space-y-2">{priceTotals.map((row) => <div key={row.retailer} className="flex items-center justify-between text-sm"><span className="capitalize font-medium text-slate-700">{row.retailer}</span><span className="text-slate-900">£{row.total.toFixed(2)} <span className="text-[11px] text-slate-500">({row.matched}/{row.totalItems} matched)</span></span></div>)}{savingsComparison && <div className="rounded-lg bg-white/70 p-2 text-xs font-semibold text-emerald-900">Save £{savingsComparison.saved.toFixed(2)} by choosing {savingsComparison.cheaper} over {savingsComparison.dearer} for the {savingsComparison.matched} items both prices matched.</div>}<p className="text-[10px] text-emerald-900 mt-2">Best available public listing per item, national prices; this does not identify prices at the nearby branch. Source: <a className="underline" href="https://apify.com/yappman/uk-supermarket-price-scraper" target="_blank" rel="noreferrer">Yappman Data daily UK grocery price dataset</a>. Prices are saved to matched shopping list items.</p></div> : <p className="text-xs text-emerald-900 mt-3">{priceMessage || 'No matching products in the daily feed.'}</p>}
+          </Card>
           <div className="h-64 rounded-xl overflow-hidden mb-3 border border-slate-200">
             <MapContainer center={center} zoom={13} style={{ height: '100%', width: '100%' }} scrollWheelZoom={false}>
               <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
@@ -674,7 +753,7 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
                           const otherStore = stores.find((s) => s.id !== store.id);
                           return (
                             <div key={id} className="flex items-center justify-between text-sm">
-                              <span>{item.name}</span>
+                          <span>{item.name}{item.estimatedPrice != null && <> · £{item.estimatedPrice.toFixed(2)}</>}</span>
                               {otherStore && <button className="text-xs text-indigo-600" onClick={() => moveItem(id, otherStore.id)}>Move to {otherStore.name.slice(0, 16)}…</button>}
                             </div>
                           );
@@ -686,7 +765,7 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
               })}
             </div>
           )}
-          <p className="text-xs text-slate-400 mt-3">Prices and live stock are not available from OpenStreetMap — this plan optimises for route detour and convenience only. Edit the allocation above before confirming.</p>
+          <p className="text-xs text-slate-400 mt-3">Nearby shops come from OpenStreetMap. Price estimates come from the national supermarket snapshot, not live local branch stock. Edit the allocation above before confirming.</p>
         </div>
       )}
     </Sheet>

@@ -3,10 +3,11 @@
 // Planner), a shared header with Settings access, toasts, and a first-run
 // welcome sheet explaining local-only storage and demo data.
 // ---------------------------------------------------------------------------
-import React, { Suspense, useState } from 'react';
+import React, { Suspense, useEffect, useRef, useState } from 'react';
 import { Shirt, Refrigerator, CalendarClock, Settings as SettingsIcon, Sparkles, House } from 'lucide-react';
 import { AppProvider, useApp } from './context';
 import { BottomNav, ToastContainer, LoadingScreen, Button, Sheet, DemoBadge } from './components';
+import { compareUkBasket } from './prices';
 
 const Wardrobe = React.lazy(() => import('./features/Wardrobe'));
 const Fridge = React.lazy(() => import('./features/Fridge'));
@@ -24,9 +25,25 @@ const AREA_TITLES: Record<MainArea, string> = {
 };
 
 function Shell() {
-  const { loading, settings, updateSettings } = useApp();
+  const { loading, settings, shoppingItems, updateShoppingItem, updateSettings } = useApp();
   const [area, setArea] = useState<MainArea>('home');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const pricesWarmed = useRef(false);
+
+  useEffect(() => {
+    if (loading || pricesWarmed.current) return;
+    pricesWarmed.current = true;
+    const pending = shoppingItems.filter((item) => !item.purchased);
+    if (!pending.length) return;
+    compareUkBasket(pending).then(async ({ priceByItem }) => {
+      await Promise.all(pending.map((item) => {
+        const price = priceByItem[item.id];
+        return price === undefined || (item.priceSource === 'verified' && item.estimatedPrice === price)
+          ? Promise.resolve()
+          : updateShoppingItem(item.id, { estimatedPrice: price, priceSource: 'verified' });
+      }));
+    }).catch(() => { /* Smart Shopping will show a clear price feed error if the source is unavailable. */ });
+  }, [loading]);
 
   if (loading) return <LoadingScreen />;
 
