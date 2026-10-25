@@ -106,7 +106,8 @@ const FOOD_PHOTOS: Record<string, string> = {
   Chicken: new URL('../food images/chicken.png', import.meta.url).href,
   'Chicken Pasta': new URL('../food images/chicken pasta.jpg', import.meta.url).href,
   Cheese: new URL('../food images/cheese.jpg', import.meta.url).href,
-  Bread: new URL('../food images/bread.jpg', import.meta.url).href
+  Bread: new URL('../food images/bread.jpg', import.meta.url).href,
+  'Wholewheat Bread': new URL('../food images/bread.jpg', import.meta.url).href
 };
 
 function img(label: string, url: string, kind: 'original' | 'display' = 'display') {
@@ -203,7 +204,7 @@ export async function buildSeedFood(): Promise<FoodItem[]> {
     { name: 'Eggs', days: 14, qty: 6, unit: 'pcs', loc: 'fridge', certainty: 'best-before', nutrition: { calories: 143, proteinG: 13, carbsG: 0.7, fatG: 9.5, servingSize: '100 g' } },
     { name: 'Chicken', days: 2, qty: 500, unit: 'g', loc: 'fridge', certainty: 'use-by', nutrition: { calories: 165, proteinG: 31, carbsG: 0, fatG: 3.6, servingSize: '100 g cooked' } },
     { name: 'Cheese', days: 20, qty: 1, unit: 'pack', loc: 'fridge', certainty: 'use-by', nutrition: { calories: 402, proteinG: 25, carbsG: 1.3, fatG: 33, servingSize: '100 g' } },
-    { name: 'Bread', days: 5, qty: 1, unit: 'loaf', loc: 'cupboard', certainty: 'best-before', nutrition: { calories: 247, proteinG: 13, carbsG: 41, fatG: 4.2, servingSize: '100 g' } },
+    { name: 'Wholewheat Bread', days: 5, qty: 1, unit: 'loaf', loc: 'cupboard', certainty: 'best-before', nutrition: { calories: 247, proteinG: 13, carbsG: 41, fatG: 4.2, servingSize: '100 g' } },
     { name: 'Flaxseeds', days: 365, qty: 1, unit: 'pack', loc: 'cupboard', certainty: 'best-before', nutrition: { calories: 534, proteinG: 18, carbsG: 29, fatG: 42, servingSize: '100 g' } }
   ];
   const out: FoodItem[] = [];
@@ -271,9 +272,8 @@ export async function buildSeedRecipes(): Promise<Recipe[]> {
 
 export function buildSeedShoppingItems(): ShoppingItem[] {
   return [
-    ['Tomato', 4, 'pcs'], ['Spinach', 1, 'bag'], ['Pasta', 1, 'pack'],
-    ['Oats', 1, 'pack'], ['Milk', 1, 'bottle'], ['Heavy Cream', 1, 'carton'], ['Eggs', 6, 'pcs'],
-    ['Chicken', 500, 'g'], ['Cheese', 1, 'pack'], ['Bread', 1, 'loaf'], ['Flaxseeds', 1, 'pack']
+    ['Tomato', 4, 'pcs'], ['Eggs', 6, 'pcs'], ['Oats', 1, 'pack'],
+    ['Cheese', 1, 'pack'], ['Bread', 1, 'loaf'], ['Chicken', 500, 'g'], ['Milk', 1, 'bottle']
   ].map(([name, quantity, unit]) => ({
     id: newId(), name: String(name), quantity: Number(quantity), unit: String(unit), purchased: false,
     reason: 'manual', priceSource: 'unknown', estimatedPrice: null,

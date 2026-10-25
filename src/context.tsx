@@ -361,6 +361,57 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         await kvSet('photo-catalog-v2-replaced', true);
       }
 
+      // Set the requested pantry stock and keep the starter shopping list to
+      // only the seven items the user wants to demonstrate.
+      if (!(await kvGet<boolean>('shopping-stock-list-v2'))) {
+        const normalizeName = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const stockTargets = [
+          { name: 'Spinach', aliases: new Set(['spinach']) },
+          { name: 'Heavy Cream', aliases: new Set(['heavycream']) },
+          { name: 'Wholewheat Bread', aliases: new Set(['bread', 'wholewheatbread', 'wholemealbread', 'wholemealloaf']) }
+        ];
+        const seededFoods = await buildSeedFood();
+        const existingFoods = await foodItemsStore.all();
+        for (const target of stockTargets) {
+          const matches = existingFoods.filter((food) => target.aliases.has(normalizeName(food.name)));
+          const primary = matches.find((food) => normalizeName(food.name) === normalizeName(target.name)) ?? matches[0];
+          const stockItem = primary ?? seededFoods.find((food) => food.name === target.name);
+          if (stockItem) {
+            await foodItemsStore.put({ ...stockItem, name: target.name, quantity: Math.max(1, stockItem.quantity), estimatedRemainingFraction: 1, updatedAt: nowIso() });
+            for (const duplicate of matches) if (duplicate.id !== stockItem.id) await foodItemsStore.remove(duplicate.id);
+          }
+        }
+
+        const wantedItems = buildSeedShoppingItems();
+        const wantedByName = new Map(wantedItems.map((item) => [normalizeName(item.name), item]));
+        const matchedNames = new Set<string>();
+        for (const item of await shoppingItemsStore.all()) {
+          const normalized = normalizeName(item.name);
+          const canonical = normalized === 'tomatoes' ? 'tomato'
+            : normalized === 'cheddar' ? 'cheese'
+              : normalized === 'wholewheatbread' || normalized === 'wholemealbread' ? 'bread'
+                : normalized;
+          const template = wantedByName.get(canonical);
+          if (!template || matchedNames.has(canonical)) {
+            await shoppingItemsStore.remove(item.id);
+            continue;
+          }
+          matchedNames.add(canonical);
+          await shoppingItemsStore.put({
+            ...item,
+            name: template.name,
+            quantity: item.quantity > 0 ? item.quantity : template.quantity,
+            unit: item.quantity > 0 ? item.unit : template.unit,
+            purchased: false,
+            reason: 'manual',
+            updatedAt: nowIso()
+          });
+        }
+        const missingItems = wantedItems.filter((item) => !matchedNames.has(normalizeName(item.name)));
+        if (missingItems.length) await shoppingItemsStore.putMany(missingItems);
+        await kvSet('shopping-stock-list-v2', true);
+      }
+
       const [garments, outfits, outfitFeedback, laundryGroups, washRecords, foodItems, recipes, mealPlans, shoppingItems, calendarEvents, tasks, reminders, preferencesRaw, settingsRaw] =
         await Promise.all([
           garmentsStore.all(),
