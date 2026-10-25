@@ -49,10 +49,11 @@ export default function Planner() {
 function ScheduleTab() {
   const { calendarEvents, importEvents, pushToast } = useApp();
   const [editing, setEditing] = useState<CalendarEvent | 'new' | null>(null);
+  const [calendarView, setCalendarView] = useState<'day' | 'week' | 'month'>('month');
   const fileRef = React.useRef<HTMLInputElement>(null);
 
-  const rangeStart = useMemo(() => new Date(), []);
-  const rangeEnd = useMemo(() => new Date(Date.now() + 1000 * 60 * 60 * 24 * 30), []);
+  const rangeStart = useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); if (calendarView === 'week') d.setDate(d.getDate() - d.getDay()); if (calendarView === 'month') { d.setDate(1); d.setDate(d.getDate() - d.getDay()); } return d; }, [calendarView]);
+  const rangeEnd = useMemo(() => new Date(rangeStart.getTime() + (calendarView === 'day' ? 1 : calendarView === 'week' ? 7 : 42) * 86400000), [rangeStart, calendarView]);
   const occurrences = useMemo(
     () =>
       calendarEvents
@@ -96,7 +97,8 @@ function ScheduleTab() {
         <input ref={fileRef} type="file" accept=".ics,text/calendar" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImportFile(f); e.target.value = ''; }} />
         <Button size="sm" variant="outline" onClick={handleExport}><Download size={14} /> Export .ics</Button>
       </div>
-      <p className="text-xs text-slate-400 mb-3">This planner supplements your existing calendar via manual entry and standard .ics import/export. Google Calendar / Outlook sync requires OAuth setup described in Settings and is not pre-connected.</p>
+      <div className="flex gap-1 p-1 rounded-xl bg-slate-100 mb-3 w-fit">{(['day', 'week', 'month'] as const).map(v => <button key={v} onClick={() => setCalendarView(v)} className={`px-3 py-1.5 rounded-lg text-xs capitalize ${calendarView === v ? 'bg-white shadow text-indigo-700' : 'text-slate-500'}`}>{v}</button>)}</div>
+      <p className="text-xs text-slate-400 mb-3">Manage your schedule here, or import and export events using .ics files.</p>
 
       {clashes.length > 0 && (
         <div className="bg-amber-50 text-amber-800 text-xs rounded-xl p-3 mb-3 flex items-start gap-2">
@@ -105,6 +107,10 @@ function ScheduleTab() {
         </div>
       )}
 
+      {calendarView !== 'day' && <div className="grid grid-cols-7 gap-1 mb-3">
+        {calendarView === 'month' && ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => <div key={d} className="text-center text-[10px] text-slate-400 py-1">{d}</div>)}
+        {Array.from({ length: calendarView === 'week' ? 7 : 42 }, (_, i) => { const date = new Date(rangeStart); date.setDate(date.getDate() + i); const dayEvents = occurrences.filter(o => o.start.toDateString() === date.toDateString()); return <button key={i} onClick={() => setCalendarView('day')} className="min-h-16 rounded-lg border border-slate-100 bg-white p-1 text-left"><span className="text-[10px] text-slate-500">{date.getDate()}</span>{dayEvents.slice(0, 2).map((o, n) => <span key={n} className="block truncate rounded bg-indigo-50 px-1 text-[9px] text-indigo-700">{o.event.title}</span>)}</button>; })}
+      </div>}
       {occurrences.length === 0 ? (
         <EmptyState icon={<Calendar size={24} />} title="No upcoming events" description="Add classes, assignments or personal commitments." action={<Button onClick={() => setEditing('new')}><Plus size={16} /> Add event</Button>} />
       ) : (
@@ -120,10 +126,10 @@ function ScheduleTab() {
                   {occ.event.title}
                   {clashedEventIds.has(occ.event.id) && <AlertTriangle size={13} className="text-amber-600 shrink-0" />}
                 </p>
-                <p className="text-xs text-slate-400">{formatDateTime(occ.start.toISOString())} – {occ.end.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}{occ.event.location ? ` · ${occ.event.location}` : ''}</p>
+                <p className="text-xs text-slate-400">{formatDateTime(occ.start.toISOString())} – {occ.end.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}{occ.event.location ? <> · <a onClick={(e) => e.stopPropagation()} className="text-indigo-600 underline" target="_blank" rel="noreferrer" href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(occ.event.location)}`}>{occ.event.location}</a></> : ''}</p>
               </div>
               <div className="flex flex-col items-end gap-1">
-                <Badge tone={occ.event.category === 'class' ? 'indigo' : occ.event.category === 'assignment' ? 'rose' : 'slate'}>{occ.event.category}</Badge>
+                {occ.event.location ? <a onClick={(e) => e.stopPropagation()} target="_blank" rel="noreferrer" href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(occ.event.location)}`}><Badge tone={occ.event.category === 'class' ? 'indigo' : occ.event.category === 'assignment' ? 'rose' : 'slate'}>{occ.event.category} · map</Badge></a> : <Badge tone={occ.event.category === 'class' ? 'indigo' : occ.event.category === 'assignment' ? 'rose' : 'slate'}>{occ.event.category}</Badge>}
                 {occ.event.recurrence.freq !== 'none' && <Repeat size={12} className="text-slate-400" />}
               </div>
             </Card>
@@ -327,7 +333,7 @@ function TodoTab() {
                     {t.dueAt && <Badge tone={d !== null && d < 0 && !t.completed ? 'rose' : 'slate'}>{formatRelativeDays(d)}</Badge>}
                     <Badge tone="slate">{t.category}</Badge>
                     <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${TASK_PRIORITY_COLORS[t.priority]}`}>{TASK_PRIORITY_LABELS[t.priority]}</span>
-                    {t.location && <span className="text-[11px] text-slate-400 flex items-center gap-0.5"><MapPin size={10} /> {t.location}</span>}
+                    {t.location && <a onClick={(e) => e.stopPropagation()} target="_blank" rel="noreferrer" href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(t.location)}`} className="text-[11px] text-indigo-500 flex items-center gap-0.5"><MapPin size={10} /> {t.location}</a>}
                     {t.reminderMinutesBefore.length > 0 && <Bell size={11} className="text-slate-400" />}
                   </div>
                 </div>
@@ -591,7 +597,7 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
             <Field label="Travel mode">
               <Select value={travelMode} onChange={(e) => setTravelMode(e.target.value as TravelMode)}>
                 <option value="walking">Walking</option><option value="cycling">Cycling</option><option value="driving">Driving</option>
-                <option value="public-transport">Public transport (routed as walking — OSRM has no transit profile)</option>
+                <option value="public-transport">Public transport (Google Maps directions)</option>
               </Select>
             </Field>
             <Field label="Shopping deadline (optional)"><TextInput type="datetime-local" value={deadline} onChange={(e) => setDeadline(e.target.value)} /></Field>
@@ -626,6 +632,10 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
 
       {stage === 'results' && (
         <div>
+            <div className="flex flex-wrap gap-2 mb-3">
+              {(['transit', 'walking', 'bicycling', 'driving'] as const).map((mode) => <a key={mode} className="px-3 py-2 rounded-xl bg-indigo-50 text-indigo-700 text-xs font-medium" target="_blank" rel="noreferrer" href={`https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(startQuery)}&destination=${encodeURIComponent(destQuery)}&travelmode=${mode}`}>{mode === 'transit' ? 'Google Maps · Transit' : `Google Maps · ${mode}`}</a>)}
+            </div>
+            <p className="text-xs text-slate-500 mb-3">Google Maps opens with live route alternatives, including bus and train connections. The map below finds nearby shops along the selected route.</p>
           <div className="h-64 rounded-xl overflow-hidden mb-3 border border-slate-200">
             <MapContainer center={center} zoom={13} style={{ height: '100%', width: '100%' }} scrollWheelZoom={false}>
               <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />

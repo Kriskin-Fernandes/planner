@@ -151,7 +151,9 @@ export function recommendOutfits(
   ctx: OutfitContext & { mustIncludeIds?: string[]; mustExcludeIds?: string[]; maxResults?: number } = {}
 ): OutfitCandidateScore[] {
   const exclude = new Set(ctx.mustExcludeIds ?? []);
-  const pool = wardrobe.filter((g) => !exclude.has(g.id));
+  // A garment marked for washing must never reach any generated candidate.
+  // Keep this guard here as well as in the picker UI so every caller agrees.
+  const pool = wardrobe.filter((g) => !exclude.has(g.id) && garmentAvailability(g).available);
   const by = (cat: Garment['category']) => pool.filter((g) => g.category === cat);
   const tops = by('tops');
   const bottoms = by('bottoms');

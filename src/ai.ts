@@ -89,7 +89,9 @@ export type AiResult<T> =
   | { status: 'error'; provider: 'gemini' | 'local'; errorType: AiErrorType; message: string };
 
 function classifyGeminiError(err: unknown): AiErrorType {
-  const msg = err instanceof Error ? err.message : String(err);
+  const detail = err && typeof err === 'object' ? err as { message?: unknown; status?: unknown; code?: unknown; statusText?: unknown } : undefined;
+  const msg = [detail?.message, detail?.status, detail?.code, detail?.statusText, err instanceof Error ? err.name : '']
+    .filter(Boolean).join(' ');
   if (/api key not valid|401|permission_denied|403/i.test(msg)) return 'invalid-key';
   if (/429|resource_exhausted|quota/i.test(msg)) return 'quota';
   if (/failed to fetch|network|ENOTFOUND|ECONNREFUSED/i.test(msg)) return 'network';
@@ -147,7 +149,8 @@ async function callGeminiJson<T>(
     }
     return { status: 'ok', data: result.data, provider: 'gemini' };
   } catch (err) {
-    return { status: 'error', provider: 'gemini', errorType: classifyGeminiError(err), message: err instanceof Error ? err.message : String(err) };
+    const message = err instanceof Error ? err.message : err && typeof err === 'object' && 'message' in err ? String((err as { message: unknown }).message) : String(err);
+    return { status: 'error', provider: 'gemini', errorType: classifyGeminiError(err), message: message || 'Gemini request failed without an error message. Check the key, model name, and browser network access.' };
   }
 }
 

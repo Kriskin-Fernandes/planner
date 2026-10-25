@@ -4,18 +4,20 @@
 // welcome sheet explaining local-only storage and demo data.
 // ---------------------------------------------------------------------------
 import React, { Suspense, useState } from 'react';
-import { Shirt, Refrigerator, CalendarClock, Settings as SettingsIcon, Sparkles } from 'lucide-react';
+import { Shirt, Refrigerator, CalendarClock, Settings as SettingsIcon, Sparkles, House } from 'lucide-react';
 import { AppProvider, useApp } from './context';
 import { BottomNav, ToastContainer, LoadingScreen, Button, Sheet, DemoBadge } from './components';
 
 const Wardrobe = React.lazy(() => import('./features/Wardrobe'));
 const Fridge = React.lazy(() => import('./features/Fridge'));
 const Planner = React.lazy(() => import('./features/Planner'));
+const Home = React.lazy(() => import('./features/Home'));
 const SettingsSheet = React.lazy(() => import('./features/Settings'));
 
-type MainArea = 'wardrobe' | 'fridge' | 'planner';
+type MainArea = 'home' | 'wardrobe' | 'fridge' | 'planner';
 
 const AREA_TITLES: Record<MainArea, string> = {
+  home: 'Today',
   wardrobe: 'Wardrobe',
   fridge: 'Fridge',
   planner: 'Planner'
@@ -23,7 +25,7 @@ const AREA_TITLES: Record<MainArea, string> = {
 
 function Shell() {
   const { loading, settings, updateSettings } = useApp();
-  const [area, setArea] = useState<MainArea>('wardrobe');
+  const [area, setArea] = useState<MainArea>('home');
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   if (loading) return <LoadingScreen />;
@@ -46,6 +48,7 @@ function Shell() {
 
       <main className="flex-1 pt-3">
         <Suspense fallback={<LoadingScreen label="Loading…" />}>
+          {area === 'home' && <Home openPlanner={() => setArea('planner')} />}
           {area === 'wardrobe' && <Wardrobe />}
           {area === 'fridge' && <Fridge />}
           {area === 'planner' && <Planner />}
@@ -54,6 +57,7 @@ function Shell() {
 
       <BottomNav
         items={[
+          { key: 'home', label: 'Today', icon: <House size={20} /> },
           { key: 'wardrobe', label: 'Wardrobe', icon: <Shirt size={20} /> },
           { key: 'fridge', label: 'Fridge', icon: <Refrigerator size={20} /> },
           { key: 'planner', label: 'Planner', icon: <CalendarClock size={20} /> }

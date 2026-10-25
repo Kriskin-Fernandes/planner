@@ -212,6 +212,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
+      // Grow older installs' original small demo catalogue without disturbing
+      // anything the user has edited or added.
+      if (!(await kvGet<boolean>('catalog-v2-added'))) {
+        const existingGarments = await garmentsStore.all();
+        if (existingGarments.length > 0 && existingGarments.length < 20) {
+          const names = new Set(existingGarments.map((g) => g.name));
+          const additions = (await buildSeedGarments()).filter((g) => !names.has(g.name));
+          if (additions.length) await garmentsStore.putMany(additions);
+        }
+        const existingFood = await foodItemsStore.all();
+        if (existingFood.length > 0 && existingFood.length < 20) {
+          const names = new Set(existingFood.map((f) => f.name));
+          const additions = (await buildSeedFood()).filter((f) => !names.has(f.name));
+          if (additions.length) await foodItemsStore.putMany(additions);
+        }
+        const existingShopping = await shoppingItemsStore.all();
+        if (existingShopping.length > 0 && existingShopping.length < 10) {
+          const names = new Set(existingShopping.map((item) => item.name));
+          const additions = buildSeedShoppingItems().filter((item) => !names.has(item.name));
+          if (additions.length) await shoppingItemsStore.putMany(additions);
+        }
+        await kvSet('catalog-v2-added', true);
+      }
+
       const [garments, outfits, outfitFeedback, laundryGroups, washRecords, foodItems, recipes, mealPlans, shoppingItems, calendarEvents, tasks, reminders, preferencesRaw, settingsRaw] =
         await Promise.all([
           garmentsStore.all(),

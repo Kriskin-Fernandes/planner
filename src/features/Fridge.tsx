@@ -90,7 +90,7 @@ function FoodTab() {
             return (
               <Card key={f.id} onClick={() => setSelected(f)} className="overflow-hidden">
                 <div className="relative aspect-square">
-                  <BlobImage blobKey={f.image?.blobKey} alt={f.name} className="w-full h-full" />
+                  <BlobImage blobKey={f.image?.blobKey} url={f.image?.url} alt={f.name} className="w-full h-full" />
                   <span className="absolute top-1.5 left-1.5"><Badge tone={RISK_BADGE[risk].tone}>{RISK_BADGE[risk].label}</Badge></span>
                 </div>
                 <div className="p-2.5">
@@ -369,7 +369,7 @@ function MealsTab() {
         <div className="space-y-3">
           {ranked.map(({ recipe, overall, perIngredient, score }) => (
             <Card key={recipe.id} onClick={() => setSelected(recipe)} className="p-3 flex gap-3">
-              <div className="h-16 w-16 rounded-lg overflow-hidden shrink-0"><BlobImage blobKey={recipe.image?.blobKey} alt={recipe.name} className="w-full h-full" /></div>
+              <div className="h-16 w-16 rounded-lg overflow-hidden shrink-0"><BlobImage blobKey={recipe.image?.blobKey} url={recipe.image?.url} alt={recipe.name} className="w-full h-full" /></div>
               <div className="flex-1 min-w-0">
                 <p className="font-medium text-slate-800 truncate">{recipe.name}</p>
                 <p className="text-xs text-slate-400">{recipe.servings} servings · {recipe.prepMinutes ?? '?'} min</p>
@@ -614,6 +614,10 @@ function ShoppingTab() {
       <Button variant="outline" size="sm" className="mb-4" onClick={async () => { await runShoppingReconciliation(recipes.map((r) => r.id)); pushToast('Shopping list synced with meals & low-stock items', 'success'); }}>
         Sync with meals & inventory
       </Button>
+      {pending.length >= 10 && <Card className="p-4 mb-4 bg-emerald-50 border-emerald-100">
+        <p className="text-sm font-semibold text-emerald-900">Shared shop estimate</p>
+        <p className="text-xs text-emerald-800 mt-1">Splitting this {pending.length}-item shop with a housemate could save about £{(pending.reduce((sum, item) => sum + (item.estimatedPrice ?? 0), 0) * 0.2).toFixed(2)} through shared staples and multi-buy deals. Planning estimate (20%), not a live price quote.</p>
+      </Card>}
 
       {expiredNeedingReview.length > 0 && (
         <div className="bg-rose-50 text-rose-700 text-xs rounded-xl p-3 mb-4 flex items-start gap-2">
@@ -635,7 +639,7 @@ function ShoppingTab() {
                 <div className="flex items-center gap-1.5 mt-0.5">
                   <span className="text-xs text-slate-400">{item.quantity} {item.unit}</span>
                   <Badge tone={item.reason === 'recipe' ? 'indigo' : item.reason === 'low-stock' ? 'amber' : item.reason === 'expired-replace' ? 'rose' : 'slate'}>{item.reason.replace('-', ' ')}</Badge>
-                  {item.priceSource === 'unknown' ? <span className="text-[11px] text-slate-400">price unknown</span> : <span className="text-[11px] text-slate-500">~${item.estimatedPrice}</span>}
+                  {item.priceSource === 'unknown' ? <span className="text-[11px] text-slate-400">price unknown</span> : <span className="text-[11px] text-slate-500">~£${item.estimatedPrice}</span>}
                 </div>
               </div>
               <IconButton icon={<Trash2 size={14} />} label="Remove" onClick={async () => { if (await confirm.ask(`Remove "${item.name}" from the list?`)) await deleteShoppingItem(item.id); }} />
@@ -662,3 +666,4 @@ function ShoppingTab() {
     </div>
   );
 }
+

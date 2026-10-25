@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
-// UI constants and demo/seed data. All seeded images are generated locally
-// (coloured placeholder cards) -- they are clearly not real photographs and
+// UI constants and demo/seed data. Catalogue images use public Unsplash photo URLs
+// and are loaded only when the catalogue is viewed.
 // every seeded record is labelled "Demo" in the UI via `isDemo` tracking in
 // kv storage, never presented as a real AI result.
 // ---------------------------------------------------------------------------
@@ -72,7 +72,7 @@ export const TASK_PRIORITY_COLORS: Record<string, string> = {
   urgent: 'bg-rose-100 text-rose-700'
 };
 
-// ---------- Placeholder image generation (local, no AI, no network) -----------
+// ---------- Remote catalogue images -------------------------------------------
 
 export async function generatePlaceholderImageBlob(label: string, color: string): Promise<Blob> {
   const canvas = document.createElement('canvas');
@@ -100,10 +100,14 @@ export async function generatePlaceholderImageBlob(label: string, color: string)
 }
 
 async function img(label: string, color: string, kind: 'original' | 'display' = 'display') {
-  const blob = await generatePlaceholderImageBlob(label, color);
-  const blobKey = `seed-${newId()}`;
-  await saveImageBlob(blobKey, blob);
-  return { id: newId(), blobKey, kind, width: 400, height: 400 };
+  const clothingPhotos = ['photo-1521572163474-6864f9cf17ab','photo-1551028719-00167b16eac5','photo-1542272604-787c3835535d','photo-1542291026-7eec264c27ff','photo-1523381210434-271e8be1f52b'];
+  const foodPhotos = ['photo-1540420773420-3366772f4999','photo-1571771894821-ce9b6c11b08e','photo-1560806887-1e4cd0b6cbd6','photo-1518977676601-b53f82aba655','photo-1547592180-85f173990554'];
+  const key = label.toLowerCase();
+  const isFood = /milk|egg|spinach|chicken|peas|rice|pasta|yogurt|strawberr|avocado|carrot|cheddar|butter|tofu|salmon|blueberr|broccoli|lentil|oat|berry|stir fry/.test(key);
+  const photos = isFood ? foodPhotos : clothingPhotos;
+  const seed = photos[key.length % photos.length];
+  const url = `https://images.unsplash.com/${seed}?auto=format&fit=crop&w=640&q=80`;
+  return { id: newId(), kind, url, width: 640, height: 640 };
 }
 
 // ---------- Seed builders -------------------------------------------------------
@@ -117,7 +121,22 @@ export async function buildSeedGarments(): Promise<Garment[]> {
     { name: 'White Sneakers', category: 'footwear', layerRole: 'flexible', mainColor: '#fafafa', thickness: 'light', warmthScore: 3 },
     { name: 'Rain Jacket', category: 'outerwear', layerRole: 'outer', mainColor: '#2c6e49', thickness: 'medium', warmthScore: 5, features: { hood: true, waterproof: true, insulated: false, moistureWicking: false } as any },
     { name: 'Grey Beanie', category: 'headwear', layerRole: 'flexible', mainColor: '#6b7280', thickness: 'medium', warmthScore: 6 },
-    { name: 'Canvas Tote', category: 'accessories', layerRole: 'flexible', mainColor: '#d6c7a1', thickness: 'light', warmthScore: 0 }
+    { name: 'Canvas Tote', category: 'accessories', layerRole: 'flexible', mainColor: '#d6c7a1', thickness: 'light', warmthScore: 0 },
+    { name: 'Striped Oxford Shirt', category: 'tops', layerRole: 'base', mainColor: '#dbeafe', thickness: 'light', warmthScore: 3 },
+    { name: 'Black Turtleneck', category: 'tops', layerRole: 'base', mainColor: '#171717', thickness: 'medium', warmthScore: 5 },
+    { name: 'Cream Knit Sweater', category: 'tops', layerRole: 'middle', mainColor: '#e7e5e4', thickness: 'heavy', warmthScore: 7 },
+    { name: 'Green Polo Shirt', category: 'tops', layerRole: 'base', mainColor: '#166534', thickness: 'light', warmthScore: 3 },
+    { name: 'Black Chinos', category: 'bottoms', layerRole: 'base', mainColor: '#292524', thickness: 'medium', warmthScore: 4 },
+    { name: 'Beige Wide-Leg Trousers', category: 'bottoms', layerRole: 'base', mainColor: '#d6c7a1', thickness: 'medium', warmthScore: 4 },
+    { name: 'Denim Shorts', category: 'bottoms', layerRole: 'base', mainColor: '#5b7894', thickness: 'light', warmthScore: 2 },
+    { name: 'Black Leggings', category: 'bottoms', layerRole: 'base', mainColor: '#18181b', thickness: 'light', warmthScore: 3 },
+    { name: 'Brown Chelsea Boots', category: 'footwear', layerRole: 'flexible', mainColor: '#78350f', thickness: 'heavy', warmthScore: 5 },
+    { name: 'Running Trainers', category: 'footwear', layerRole: 'flexible', mainColor: '#e5e7eb', thickness: 'light', warmthScore: 3 },
+    { name: 'Denim Jacket', category: 'outerwear', layerRole: 'outer', mainColor: '#35536e', thickness: 'medium', warmthScore: 5 },
+    { name: 'Wool Coat', category: 'outerwear', layerRole: 'outer', mainColor: '#44403c', thickness: 'heavy', warmthScore: 8 },
+    { name: 'Baseball Cap', category: 'headwear', layerRole: 'flexible', mainColor: '#1e3a5f', thickness: 'light', warmthScore: 1 },
+    { name: 'Leather Belt', category: 'accessories', layerRole: 'flexible', mainColor: '#78350f', thickness: 'light', warmthScore: 0 },
+    { name: 'Grey Scarf', category: 'accessories', layerRole: 'flexible', mainColor: '#9ca3af', thickness: 'heavy', warmthScore: 4 }
   ];
   const out: Garment[] = [];
   for (const d of defs) {
@@ -183,7 +202,19 @@ export async function buildSeedFood(): Promise<FoodItem[]> {
     { name: 'Frozen Peas', color: '#86efac', days: 180, qty: 1, unit: 'bag', loc: 'freezer', certainty: 'best-before' },
     { name: 'Rice', color: '#f5f5f4', days: 365, qty: 2, unit: 'kg', loc: 'cupboard', certainty: 'best-before' },
     { name: 'Pasta', color: '#fde047', days: 300, qty: 1, unit: 'kg', loc: 'cupboard', certainty: 'best-before' },
-    { name: 'Greek Yogurt', color: '#e0f2fe', days: -1, qty: 1, unit: 'tub', loc: 'fridge', certainty: 'use-by' }
+    { name: 'Greek Yogurt', color: '#e0f2fe', days: -1, qty: 1, unit: 'tub', loc: 'fridge', certainty: 'use-by' },
+    { name: 'Strawberries', color: '#ef4444', days: 3, qty: 1, unit: 'punnet', loc: 'fridge', certainty: 'use-by' },
+    { name: 'Avocados', color: '#65a30d', days: 4, qty: 2, unit: 'pcs', loc: 'fridge', certainty: 'best-before' },
+    { name: 'Carrots', color: '#f97316', days: 14, qty: 1, unit: 'bag', loc: 'fridge', certainty: 'best-before' },
+    { name: 'Cheddar Cheese', color: '#facc15', days: 20, qty: 1, unit: 'block', loc: 'fridge', certainty: 'use-by' },
+    { name: 'Butter', color: '#fef3c7', days: 30, qty: 1, unit: 'pack', loc: 'fridge', certainty: 'best-before' },
+    { name: 'Tofu', color: '#f5f5f4', days: 5, qty: 1, unit: 'block', loc: 'fridge', certainty: 'use-by' },
+    { name: 'Salmon Fillet', color: '#fb7185', days: 1, qty: 2, unit: 'pcs', loc: 'fridge', certainty: 'use-by' },
+    { name: 'Blueberries', color: '#6366f1', days: 4, qty: 1, unit: 'punnet', loc: 'fridge', certainty: 'use-by' },
+    { name: 'Broccoli', color: '#15803d', days: 5, qty: 1, unit: 'head', loc: 'fridge', certainty: 'best-before' },
+    { name: 'Lentils', color: '#a16207', days: 365, qty: 1, unit: 'bag', loc: 'cupboard', certainty: 'best-before' },
+    { name: 'Oats', color: '#d6d3d1', days: 365, qty: 1, unit: 'bag', loc: 'cupboard', certainty: 'best-before' },
+    { name: 'Frozen Berries', color: '#a5b4fc', days: 180, qty: 1, unit: 'bag', loc: 'freezer', certainty: 'best-before' }
   ];
   const out: FoodItem[] = [];
   for (const d of defs) {
@@ -241,9 +272,15 @@ export async function buildSeedRecipes(): Promise<Recipe[]> {
 
 export function buildSeedShoppingItems(): ShoppingItem[] {
   return [
-    { id: newId(), name: 'Bananas', quantity: 6, unit: 'pcs', purchased: false, reason: 'manual', priceSource: 'unknown', createdAt: nowIso(), updatedAt: nowIso() },
-    { id: newId(), name: 'Bread', quantity: 1, unit: 'loaf', purchased: false, reason: 'low-stock', priceSource: 'unknown', createdAt: nowIso(), updatedAt: nowIso() }
-  ];
+    ['Bananas', 6, 'pcs', 1.20], ['Wholemeal bread', 1, 'loaf', 1.45], ['Oat milk', 2, 'cartons', 3.00],
+    ['Pasta', 2, 'packs', 2.00], ['Tomatoes', 6, 'pcs', 1.80], ['Chickpeas', 3, 'cans', 2.10],
+    ['Spinach', 1, 'bag', 1.50], ['Greek yogurt', 1, 'tub', 2.20], ['Cheddar', 1, 'block', 3.25],
+    ['Apples', 6, 'pcs', 2.40], ['Rice', 1, 'bag', 2.00], ['Eggs', 12, 'pcs', 3.10]
+  ].map(([name, quantity, unit, price], index) => ({
+    id: newId(), name: String(name), quantity: Number(quantity), unit: String(unit), purchased: false,
+    reason: index < 2 ? 'manual' : 'recipe', priceSource: 'estimated', estimatedPrice: Number(price),
+    createdAt: nowIso(), updatedAt: nowIso()
+  } as ShoppingItem));
 }
 
 export function buildSeedTasks(): Task[] {
@@ -332,3 +369,4 @@ export function buildSeedEvents(): CalendarEvent[] {
     }
   ];
 }
+

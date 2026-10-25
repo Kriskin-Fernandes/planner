@@ -107,7 +107,7 @@ function ClothesTab() {
           {filtered.map((g) => (
             <Card key={g.id} onClick={() => setSelected(g)} className="overflow-hidden">
               <div className="relative aspect-square">
-                <BlobImage blobKey={g.images[0]?.blobKey} alt={g.name} className="w-full h-full" />
+                <BlobImage blobKey={g.images[0]?.blobKey} url={g.images[0]?.url} alt={g.name} className="w-full h-full" />
                 {g.laundryStatus !== 'clean' && (
                   <span className="absolute top-1.5 left-1.5">
                     <Badge tone={g.laundryStatus === 'needs-wash' ? 'rose' : 'amber'}>{LAUNDRY_STATUS_LABELS[g.laundryStatus]}</Badge>
@@ -455,7 +455,7 @@ function OutfitsTab() {
       {sorted.length === 0 ? (
         <EmptyState icon={<Shirt size={24} />} title="No outfits yet" description="Build one from your wardrobe, or let the picker suggest one." action={<Button onClick={() => setEditing('new')}>Create outfit</Button>} />
       ) : (
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {sorted.map((o) => (
             <OutfitCard key={o.id} outfit={o} byId={byId} onClick={() => setEditing(o)} />
           ))}
@@ -479,13 +479,17 @@ function OutfitCard({ outfit, byId, onClick }: { outfit: Outfit; byId: Map<strin
   const garments = garmentsForLayers(outfit.layers, byId);
   return (
     <Card onClick={onClick} className="overflow-hidden">
-      <div className="aspect-square grid grid-cols-2 gap-0.5 bg-slate-100 p-0.5">
-        {garments.slice(0, 4).map((g) => (
-          <div key={g.id} className="overflow-hidden rounded-md">
-            <BlobImage blobKey={g.images[0]?.blobKey} alt={g.name} className="w-full h-full" />
+      <div className="relative min-h-64 flex flex-col items-center justify-center gap-1 bg-gradient-to-b from-stone-50 to-slate-100 py-4">
+        <div className="absolute top-4 h-12 w-12 rounded-full border-2 border-slate-300 bg-white/70" />
+        <div className="absolute top-16 h-40 w-28 rounded-[45%_45%_20%_20%] border-2 border-slate-300/70 bg-white/40" />
+        <div className="relative z-10 flex flex-col items-center gap-1 pt-2">
+        {garments.slice(0, 5).map((g) => (
+          <div key={g.id} className="h-12 w-24 overflow-hidden rounded-lg border border-white shadow-sm">
+            <BlobImage blobKey={g.images[0]?.blobKey} url={g.images[0]?.url} alt={g.name} className="w-full h-full" />
           </div>
         ))}
-        {garments.length === 0 && <div className="col-span-2 row-span-2 flex items-center justify-center text-slate-300"><Shirt size={28} /></div>}
+        {garments.length === 0 && <div className="h-40 flex items-center justify-center text-slate-300"><Shirt size={28} /></div>}
+        </div>
       </div>
       <div className="p-2.5">
         <div className="flex items-center justify-between">
@@ -605,8 +609,8 @@ function OutfitEditorSheet({ value, onClose }: { value: Outfit | null; onClose: 
                 const active = (selection[cat] ?? []).includes(g.id);
                 const avail = garmentAvailability(g);
                 return (
-                  <button key={g.id} data-testid="garment-option" onClick={() => toggle(cat, g.id)} className={`relative shrink-0 h-20 w-20 rounded-xl overflow-hidden border-2 transition ${active ? 'border-indigo-600' : 'border-transparent'}`}>
-                    <BlobImage blobKey={g.images[0]?.blobKey} alt={g.name} className="w-full h-full" />
+                  <button key={g.id} data-testid="garment-option" disabled={!avail.available && !active} title={!avail.available ? avail.reason : g.name} onClick={() => toggle(cat, g.id)} className={`relative shrink-0 h-20 w-20 rounded-xl overflow-hidden border-2 transition ${active ? 'border-indigo-600' : 'border-transparent'} ${!avail.available ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                    <BlobImage blobKey={g.images[0]?.blobKey} url={g.images[0]?.url} alt={g.name} className="w-full h-full" />
                     {!avail.available && <div className="absolute inset-0 bg-white/70 flex items-center justify-center"><AlertTriangle size={16} className="text-amber-600" /></div>}
                     {active && <div className="absolute inset-0 ring-2 ring-inset ring-indigo-600 bg-indigo-600/10 flex items-center justify-center"><CheckCircle2 size={18} className="text-indigo-600" /></div>}
                   </button>
@@ -702,7 +706,7 @@ function OutfitPickerSheet({ onClose, onEdit }: { onClose: () => void; onEdit: (
           <Card key={i} className="p-3">
             <div className="flex gap-2 mb-2">
               {r.garments.map((g) => (
-                <div key={g.id} className="h-14 w-14 rounded-lg overflow-hidden"><BlobImage blobKey={g.images[0]?.blobKey} alt={g.name} className="w-full h-full" /></div>
+                <div key={g.id} className="h-14 w-14 rounded-lg overflow-hidden"><BlobImage blobKey={g.images[0]?.blobKey} url={g.images[0]?.url} alt={g.name} className="w-full h-full" /></div>
               ))}
             </div>
             <div className="flex items-center gap-1.5 flex-wrap mb-2">
@@ -844,7 +848,7 @@ function LaundryTab() {
           <div className="flex gap-2 overflow-x-auto no-scrollbar mb-2 pb-1">
             {needsWash.map((g) => (
               <div key={g.id} className="shrink-0 w-24">
-                <div className="h-24 w-24 rounded-xl overflow-hidden mb-1"><BlobImage blobKey={g.images[0]?.blobKey} alt={g.name} className="w-full h-full" /></div>
+                <div className="h-24 w-24 rounded-xl overflow-hidden mb-1"><BlobImage blobKey={g.images[0]?.blobKey} url={g.images[0]?.url} alt={g.name} className="w-full h-full" /></div>
                 <Select className="!py-1 !text-xs" defaultValue="" onChange={(e) => e.target.value && assignGarmentToGroup(g.id, e.target.value)}>
                   <option value="" disabled>Add to group…</option>
                   {laundryGroups.map((lg) => <option key={lg.id} value={lg.id}>{lg.name}</option>)}
@@ -874,7 +878,7 @@ function LaundryTab() {
                 {items.length === 0 && <p className="text-xs text-slate-400 py-2">No garments in this group yet.</p>}
                 {items.map((g) => (
                   <div key={g.id} className="relative shrink-0 h-14 w-14 rounded-lg overflow-hidden">
-                    <BlobImage blobKey={g.images[0]?.blobKey} alt={g.name} className="w-full h-full" />
+                    <BlobImage blobKey={g.images[0]?.blobKey} url={g.images[0]?.url} alt={g.name} className="w-full h-full" />
                     <button className="absolute top-0 right-0 bg-white/90 rounded-bl-md p-0.5" onClick={() => assignGarmentToGroup(g.id, null)}><X size={11} /></button>
                   </div>
                 ))}
@@ -959,3 +963,4 @@ function EditGroupSheet({ group, garmentsInGroup, onClose, onSave }: { group: La
     </Sheet>
   );
 }
+

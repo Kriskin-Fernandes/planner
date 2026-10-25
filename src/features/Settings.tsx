@@ -5,7 +5,7 @@
 // ---------------------------------------------------------------------------
 import React, { useEffect, useState } from 'react';
 import {
-  KeyRound, ShieldAlert, Bell, Download, Upload, Trash2, Smartphone, Info, ExternalLink,
+  KeyRound, ShieldAlert, Bell, Download, Upload, Trash2, Smartphone, Info, ExternalLink, MapPin,
   Eye, EyeOff, CheckCircle2, Cpu
 } from 'lucide-react';
 import { useApp } from '../context';
@@ -17,7 +17,7 @@ export default function SettingsSheet({ onClose }: { onClose: () => void }) {
   const confirm = useConfirm();
   const [keyInput, setKeyInput] = useState(getGeminiApiKey() ?? '');
   const [showKey, setShowKey] = useState(false);
-  const [remember, setRemember] = useState(settings.geminiRememberKey);
+  const [remember, setRemember] = useState(true);
   const [configured, setConfigured] = useState(isGeminiConfigured());
   const [installPromptEvent, setInstallPromptEvent] = useState<any>(null);
   const fileRef = React.useRef<HTMLInputElement>(null);
@@ -35,7 +35,7 @@ export default function SettingsSheet({ onClose }: { onClose: () => void }) {
     setGeminiApiKey(keyInput.trim(), remember);
     updateSettings({ geminiRememberKey: remember });
     setConfigured(!!keyInput.trim());
-    pushToast(keyInput.trim() ? 'Gemini key set for this session' : 'Gemini key cleared', 'success');
+    pushToast(keyInput.trim() ? (remember ? 'Gemini key saved on this device' : 'Gemini key set for this session') : 'Gemini key cleared', 'success');
   }
 
   function clearKey() {
@@ -124,7 +124,7 @@ export default function SettingsSheet({ onClose }: { onClose: () => void }) {
           <Toggle checked={remember} onChange={setRemember} /> Remember on this device (not secure — see warning above)
         </label>
         <div className="flex gap-2 mb-3">
-          <Button onClick={saveKey} disabled={!keyInput.trim()}>Save key for this session</Button>
+          <Button onClick={saveKey} disabled={!keyInput.trim()}>Save key</Button>
           {configured && <Button variant="outline" onClick={clearKey}>Clear key</Button>}
         </div>
         <div className="grid grid-cols-2 gap-3">
@@ -147,6 +147,12 @@ export default function SettingsSheet({ onClose }: { onClose: () => void }) {
           <span>Use local vision model (Transformers.js) as a supplementary category check<br /><span className="text-xs text-slate-400">Downloads a ~150MB CLIP model on first use. Off by default to save mobile data.</span></span>
           <Toggle checked={settings.useLocalVisionModel} onChange={(v) => updateSettings({ useLocalVisionModel: v })} />
         </label>
+      </section>
+
+      <section className="mb-6">
+        <div className="flex items-center gap-2 mb-2"><MapPin size={16} className="text-indigo-600"/><h3 className="font-semibold text-slate-800 text-sm">Home location & weather</h3></div>
+        <p className="text-xs text-slate-500 mb-2">Your location is saved on this device for the Today page.</p>
+        <TextInput value={settings.homeAddress} onChange={(e) => updateSettings({ homeAddress: e.target.value })} placeholder="Town, postcode, or address" />
       </section>
 
       {/* ---------------- Notifications ---------------- */}

@@ -19,7 +19,9 @@ export const StoredImageSchema = z.object({
   id: z.string(),
   /** 'original' preserves the untouched capture; others are derived. */
   kind: z.enum(['original', 'display', 'thumbnail', 'cutout']),
-  blobKey: z.string(),
+  blobKey: z.string().optional(),
+  /** Public catalogue image URL; user uploaded photos continue using blobKey. */
+  url: z.string().url().optional(),
   width: z.number().optional(),
   height: z.number().optional(),
 });
@@ -404,7 +406,7 @@ export const GeminiModelConfigSchema = z.object({
 export type GeminiModelConfig = z.infer<typeof GeminiModelConfigSchema>;
 
 export const ApplicationSettingsSchema = z.object({
-  geminiRememberKey: z.boolean().default(false),
+  geminiRememberKey: z.boolean().default(true),
   geminiModels: GeminiModelConfigSchema.default({ textModel: 'gemini-2.5-flash', visionModel: 'gemini-2.5-flash' }),
   notificationsEnabled: z.boolean().default(false),
   useLocalVisionModel: z.boolean().default(false),
@@ -412,6 +414,7 @@ export const ApplicationSettingsSchema = z.object({
   overpassBaseUrl: z.string().default('https://overpass-api.de/api/interpreter'),
   photonBaseUrl: z.string().default('https://photon.komoot.io'),
   onboardingSeen: z.boolean().default(false),
+  homeAddress: z.string().default(''),
 });
 export type ApplicationSettings = z.infer<typeof ApplicationSettingsSchema>;
 

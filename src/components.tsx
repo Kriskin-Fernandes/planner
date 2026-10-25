@@ -128,30 +128,32 @@ export function StarRating({ value, onChange, size = 18, readOnly = false }: { v
 
 // ---------- Blob-backed image -------------------------------------------------------
 
-export function BlobImage({ blobKey, alt, className = '' }: { blobKey: string | undefined; alt: string; className?: string }) {
-  const [url, setUrl] = useState<string | null>(null);
+export function BlobImage({ blobKey, url, alt, className = '' }: { blobKey: string | undefined; url?: string; alt: string; className?: string }) {
+  const [objectUrl, setObjectUrl] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
     if (!blobKey) {
-      setUrl(null);
+      setObjectUrl(null);
       return;
     }
     getImageObjectUrl(blobKey).then((u) => {
-      if (active) setUrl(u);
+      if (active) setObjectUrl(u);
     });
     return () => {
       active = false;
     };
   }, [blobKey]);
 
-  if (!url) {
+    if (url) return <img src={url} alt={alt} loading="lazy" className={`object-cover ${className}`} />;
+
+  if (!objectUrl) {
     return (
       <div className={`flex items-center justify-center bg-slate-100 text-slate-400 ${className}`}>
         <ImageIcon size={28} />
       </div>
     );
   }
-  return <img src={url} alt={alt} className={`object-cover ${className}`} />;
+  return <img src={objectUrl} alt={alt} className={`object-cover ${className}`} />;
 }
 
 // ---------- Empty state -----------------------------------------------------------
