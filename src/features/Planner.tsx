@@ -637,9 +637,9 @@ const pinIcon = (color: string) =>
 
 function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
   const { shoppingItems, updateShoppingItem, deleteShoppingItem, addShoppingItem, settings, preferences, updatePreferences, pushToast } = useApp();
-  const [startQuery, setStartQuery] = useState(settings.homeAddress || '69 Yeldham Road, W6 8JQ');
+  const [startQuery, setStartQuery] = useState('Cromwell Hospital, 164-178 Cromwell Road, London SW5 0TU');
   const [destQuery, setDestQuery] = useState(preferences.locationTags.Uni || 'Imperial College London');
-  const [travelMode, setTravelMode] = useState<TravelMode>(preferences.defaultTravelMode);
+  const [travelMode, setTravelMode] = useState<TravelMode>('walking');
   const [deadline, setDeadline] = useState('');
   const [corridor, setCorridor] = useState(800);
   const [stage, setStage] = useState<'form' | 'loading' | 'results'>('form');
@@ -649,7 +649,8 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
   const [routeGeometry, setRouteGeometry] = useState<GeoPoint[][]>([]);
   const [routeDistanceM, setRouteDistanceM] = useState(0);
   const [stores, setStores] = useState<StoreCandidate[]>([]);
-  const [unpricedStores, setUnpricedStores] = useState<StoreCandidate[]>([]);
+  const [routeStoreCandidates, setRouteStoreCandidates] = useState<StoreCandidate[]>([]);
+  const [allPriceTotals, setAllPriceTotals] = useState<BasketRetailerTotal[]>([]);
   const [nearbyAlternatives, setNearbyAlternatives] = useState<StoreCandidate[]>([]);
   const [allocation, setAllocation] = useState<Record<string, string[]>>({});
   const [plannedItems, setPlannedItems] = useState<ShoppingItem[]>([]);
@@ -678,15 +679,15 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
       if (!basket.length) { pushToast('The Yappman price feed has no multi-store sample basket right now.', 'error'); return; }
       await Promise.all(basket.map((item) => addShoppingItem(item)));
       setSelectedItemIds(new Set(basket.map((item) => item.id)));
-      const demoStart = '69 Yeldham Road, W6 8JQ';
+      const demoStart = 'Cromwell Hospital, 164-178 Cromwell Road, London SW5 0TU';
       const demoDestination = preferences.locationTags.Uni || 'Imperial College London';
       setStartQuery(demoStart);
       setDestQuery(demoDestination);
       setCorridor(800);
-      setTravelMode('public-transport');
-      await updatePreferences({ defaultTravelMode: 'public-transport' });
+      setTravelMode('walking');
+      await updatePreferences({ defaultTravelMode: 'walking' });
       pushToast(`Finding the best route-side split for ${basket.length} Yappman-priced groceries…`, 'info');
-      void runPlan({ basket, start: demoStart, destination: demoDestination, corridor: 800, transport: 'public-transport', targetSavings: 1.5 });
+      void runPlan({ basket, start: demoStart, destination: demoDestination, corridor: 800, transport: 'walking', targetSavings: 1.5 });
     } catch (error) {
       pushToast(error instanceof Error ? error.message : 'Could not load the Yappman savings basket.', 'error');
     }
@@ -704,7 +705,8 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
     setStage('loading');
     setPriceMessage('');
     setStores([]);
-    setUnpricedStores([]);
+    setRouteStoreCandidates([]);
+    setAllPriceTotals([]);
     setNearbyAlternatives([]);
     setStatusMsg(`Reading Google Maps ${routeMode === 'public-transport' ? 'public transport and walking sections' : routeMode} route…`);
     const originPt = await geocodeOne(routeStart, 'route start');
@@ -733,6 +735,7 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
       }
     }
     const nearWalkingRoute = [...candidateMap.values()].sort((a, b) => a.distanceFromRouteMeters - b.distanceFromRouteMeters);
+    setRouteStoreCandidates(nearWalkingRoute);
     setStatusMsg('Comparing today’s UK supermarket prices…');
     try {
       let itemsToAllocate = [...baseItems];
@@ -793,7 +796,7 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
       );
       setStores(confirmedWalkingStores);
       const storesWithoutPrices = nearWalkingRoute.filter((store) => !storePriceRow(store, comparison.totals));
-      setUnpricedStores(storesWithoutPrices);
+      setAllPriceTotals(comparison.totals);
       setNearbyAlternatives(!savingsFound ? storesWithoutPrices.filter((store) => !isMainstreamStore(store.name)).slice(0, 12) : []);
       setAllocation(allocateByBestPrice(itemsToAllocate, confirmedWalkingStores, selectedTotals, savingsFound));
       setPriceTotals(selectedTotals);
@@ -810,6 +813,7 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
       setStores([]);
       setAllocation({});
       setPriceTotals([]);
+      setAllPriceTotals([]);
       setPriceMessage(error instanceof Error ? error.message : 'Grocery prices are temporarily unavailable.');
     }
     setStage('results');
@@ -853,10 +857,10 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
       {stage === 'form' && (
         <div>
           <button type="button" onClick={() => void loadLondonSavingsDemo()} className="mb-3 w-full rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-left text-sm font-semibold text-emerald-900 hover:bg-emerald-100">
-            Load London savings example <span className="block text-xs font-normal text-emerald-800">Builds a sample basket from live Yappman prices and sets home → Imperial on public transport.</span>
+            Load London savings example <span className="block text-xs font-normal text-emerald-800">Builds a Yappman-priced basket and walks from Cromwell Hospital to Imperial.</span>
           </button>
           <div className="grid grid-cols-1 gap-3">
-            <Field label="Route start"><TextInput value={startQuery} onChange={(e) => setStartQuery(e.target.value)} placeholder="Imperial College London" /></Field>
+            <Field label="Route start"><TextInput value={startQuery} onChange={(e) => setStartQuery(e.target.value)} placeholder="Cromwell Hospital, London" /></Field>
             <Field label="Route destination"><TextInput value={destQuery} onChange={(e) => setDestQuery(e.target.value)} placeholder="Home address" /></Field>
             <Field label="Method of transport">
               <Select value={travelMode} onChange={(e) => { const mode = e.target.value as TravelMode; setTravelMode(mode); void updatePreferences({ defaultTravelMode: mode }); }}>
@@ -917,7 +921,14 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
               {routeGeometry.map((segment, index) => <Polyline key={index} positions={segment.map((p) => [p.lat, p.lon])} pathOptions={{ color: '#4f46e5', weight: 4 }} />)}
               {start && <Marker position={[start.lat, start.lon]} icon={pinIcon('#16a34a')}><Popup>Start</Popup></Marker>}
               {destination && <Marker position={[destination.lat, destination.lon]} icon={pinIcon('#dc2626')}><Popup>Destination</Popup></Marker>}
-              {unpricedStores.filter((s) => !stores.some((priced) => priced.id === s.id)).map((s) => <Marker key={`unpriced-${s.id}`} position={[s.point.lat, s.point.lon]} icon={storeIcon('#94a3b8')}><Popup>{s.name}<br />Price data unavailable<br />{Math.round(s.distanceFromRouteMeters)}m from route</Popup></Marker>)}
+              {routeStoreCandidates.filter((candidate) => !stores.some((selected) => selected.id === candidate.id)).map((candidate) => {
+                const quote = storePriceRow(candidate, allPriceTotals);
+                const coverage = quote ? `${quote.matched}/${quote.totalItems}` : `0/${plannedItems.length || selectedBasketCount}`;
+                const hasCompletePrices = !!quote && quote.matched === quote.totalItems;
+                return <Marker key={`route-store-${candidate.id}`} position={[candidate.point.lat, candidate.point.lon]} icon={storeIcon(hasCompletePrices ? '#4f46e5' : '#94a3b8')}>
+                  <Popup>{candidate.name}<br />{hasCompletePrices ? 'Full basket priced' : quote ? 'Partial price data' : 'Price data unavailable'} · {coverage}<br />{Math.round(candidate.distanceFromRouteMeters)}m from walking route</Popup>
+                </Marker>;
+              })}
               {stores.map((s) => (
                 <Marker key={s.id} position={[s.point.lat, s.point.lon]} icon={storeIcon((allocation[s.id] ?? []).length ? '#ea580c' : '#4f46e5')}>
                   <Popup>{s.name}<br />{Math.round(s.distanceFromRouteMeters)}m from route</Popup>
@@ -925,8 +936,8 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
               ))}
             </MapContainer>
           </div>
-          <div className="flex flex-wrap items-center gap-4 text-[11px] text-slate-500 mb-3"><span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-orange-600" /> Selected shopping stop</span><span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-indigo-600" /> Priced store</span><span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-slate-400" /> No price data</span></div>
-          <p className="text-[11px] text-slate-400 mb-3">Google Maps {travelMode === 'public-transport' ? 'walking sections' : `${travelMode} route`} total {(routeDistanceM / 1000).toFixed(1)}km.</p>
+          <div className="flex flex-wrap items-center gap-4 text-[11px] text-slate-500 mb-3"><span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-orange-600" /> Selected shopping stop</span><span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-indigo-600" /> Full basket priced</span><span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-slate-400" /> Partial or no price data</span></div>
+          <p className="text-[11px] text-slate-400 mb-3">Google Maps {travelMode === 'public-transport' ? 'walking sections' : `${travelMode} route`} total {(routeDistanceM / 1000).toFixed(1)}km. All nearby route-side branches are shown on the map.</p>
 
           {nearbyAlternatives.length > 0 && <Card className="p-3.5 mb-3 border-indigo-100 bg-indigo-50/50"><h3 className="text-sm font-semibold text-slate-800">Nearby independent groceries</h3><p className="text-xs text-slate-500 mt-1 mb-2">No cheaper fully priced mainstream split was found. These local grocery stops are near your selected route; their prices are not in the comparison feed.</p><div className="space-y-2">{nearbyAlternatives.map((store) => <div key={store.id} className="flex items-center justify-between gap-3 rounded-lg bg-white px-3 py-2"><div><p className="text-sm font-medium text-slate-700">{store.name}</p><p className="text-xs text-slate-400">{Math.round(store.distanceFromRouteMeters)}m from route · price unavailable</p></div><Button variant="outline" onClick={() => useIndependentStore(store)}>Plan this stop</Button></div>)}</div></Card>}
 

@@ -248,6 +248,58 @@ async function findSupermarketsNearRouteUncached(route: GeoPoint[], corridorWidt
         }
         await aiCacheSet(cellCacheKey, { savedAt: Date.now(), stores: cellStores }, 7 * 24 * 60 * 60 * 1000);
       }
+      // Nearby Search ranks only 20 results per cell, which can crowd out
+      // larger grocery branches in dense South Kensington. Add explicit,
+      // cached lookups for the two supermarkets on the Cromwell route; the
+      // caller still applies the strict walking-polyline distance filter.
+      const passesSouthKensington = route.some((point) => point.lat >= 51.47 && point.lat <= 51.52 && point.lon >= -0.21 && point.lon <= -0.15);
+      if (passesSouthKensington) {
+        const namedQueries = [
+          "Sainsbury's Cromwell Road, 158A Cromwell Road, London SW7 4EJ",
+          'Waitrose Gloucester Road, 128 Gloucester Road, London SW7 4SF'
+        ];
+        const routeCenter = route.reduce((center, point) => ({ lat: center.lat + point.lat / route.length, lon: center.lon + point.lon / route.length }), { lat: 0, lon: 0 });
+        for (const textQuery of namedQueries) {
+          const namedCacheKey = `google-places-named-v1:${textQuery.toLowerCase()}`;
+          let namedStores = await aiCacheGet<StoreCandidate[]>(namedCacheKey);
+          if (!namedStores) {
+            try {
+              const response = await fetch('https://places.googleapis.com/v1/places:searchText', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': apiKey, 'X-Goog-FieldMask': 'places.id,places.displayName,places.location,places.types,places.formattedAddress' },
+                body: JSON.stringify({
+                  textQuery,
+                  languageCode: 'en',
+                  regionCode: 'GB',
+                  pageSize: 5,
+                  rankPreference: 'DISTANCE',
+                  includedType: 'supermarket',
+                  locationBias: { circle: { center: { latitude: routeCenter.lat, longitude: routeCenter.lon }, radius: 5000 } }
+                })
+              });
+              const body = await response.json().catch(() => ({}));
+              if (!response.ok) throw new Error(`Google Places Text Search HTTP ${response.status}: ${body?.error?.message ?? response.statusText}`);
+              namedStores = (body.places ?? []).flatMap((place: any) => {
+                if (!place.id || !place.location) return [];
+                return [{
+                  id: `google-${place.id}`,
+                  name: place.displayName?.text ?? place.formattedAddress ?? 'Supermarket',
+                  point: { lat: place.location.latitude, lon: place.location.longitude },
+                  detourMeters: 0,
+                  distanceFromRouteMeters: 0,
+                  osmTags: { provider: 'Google Places Text Search', types: (place.types ?? []).join(',') },
+                  assignedItemIds: []
+                } satisfies StoreCandidate];
+              });
+              await aiCacheSet(namedCacheKey, namedStores, 7 * 24 * 60 * 60 * 1000);
+            } catch (error) {
+              console.warn(`Named Google Places lookup failed for ${textQuery}.`, error);
+              namedStores = [];
+            }
+          }
+          (namedStores ?? []).forEach((store) => found.set(store.id, store));
+        }
+      }
       const places = [...found.values()];
       return { status: 'ok', provider: 'local', data: places };
     } catch (err) {
