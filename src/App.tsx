@@ -51,7 +51,7 @@ function Shell() {
         if (home.status !== 'ok' || uni.status !== 'ok' || !home.data[0] || !uni.data[0]) return;
         const route = await getTransitWalkingSegments(uni.data[0].point, home.data[0].point, settings.googleMapsApiKey.trim());
         if (route.status === 'ok') {
-          for (const segment of route.data.segments) await findSupermarketsNearRoute(segment, 300);
+          for (const segment of route.data.segments) await findSupermarketsNearRoute(segment, 300, settings.googleMapsApiKey.trim());
         }
       })().catch(() => { /* Smart Shopping retries if a provider is temporarily unavailable. */ });
     }

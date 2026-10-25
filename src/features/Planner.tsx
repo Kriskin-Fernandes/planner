@@ -608,7 +608,7 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
 
     setStatusMsg('Finding shops within walking distance of the return-route walking sections…');
     const segmentResults: Awaited<ReturnType<typeof findSupermarketsNearRoute>>[] = [];
-    for (const segment of transitWalk.data.segments) segmentResults.push(await findSupermarketsNearRoute(segment, corridor));
+    for (const segment of transitWalk.data.segments) segmentResults.push(await findSupermarketsNearRoute(segment, corridor, settings.googleMapsApiKey.trim()));
     const routeError = segmentResults.find((result) => result.status !== 'ok');
     if (routeError?.status === 'error') { pushToast(routeError.message, 'error'); setStage('form'); return; }
     const candidateMap = new Map<string, StoreCandidate>();
@@ -701,7 +701,7 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
               ))}
             </div>
           )}
-          <p className="text-xs text-slate-400 mb-3">Store prices are checked against the selected basket; store locations come from OpenStreetMap and are filtered against Google Maps walking legs.</p>
+          <p className="text-xs text-slate-400 mb-3">Store prices are checked against the selected basket; nearby branches are discovered from Google Places and filtered against Google Maps walking legs.</p>
           <Button onClick={runPlan} disabled={pendingItems.length === 0}><Wand2 size={16} /> Find shops on the walk home</Button>
         </div>
       )}
@@ -730,12 +730,13 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
               {start && <Marker position={[start.lat, start.lon]} icon={pinIcon('#16a34a')}><Popup>Start</Popup></Marker>}
               {destination && <Marker position={[destination.lat, destination.lon]} icon={pinIcon('#dc2626')}><Popup>Destination</Popup></Marker>}
               {stores.map((s) => (
-                <Marker key={s.id} position={[s.point.lat, s.point.lon]} icon={storeIcon('#4f46e5')}>
+                <Marker key={s.id} position={[s.point.lat, s.point.lon]} icon={storeIcon((allocation[s.id] ?? []).length ? '#ea580c' : '#4f46e5')}>
                   <Popup>{s.name}<br />{Math.round(s.distanceFromRouteMeters)}m from route</Popup>
                 </Marker>
               ))}
             </MapContainer>
           </div>
+          <div className="flex items-center gap-4 text-[11px] text-slate-500 mb-3"><span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-orange-600" /> Selected shopping stop</span><span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-indigo-600" /> Other matched store</span></div>
           <p className="text-[11px] text-slate-400 mb-3">Map data &copy; OpenStreetMap contributors · Google Maps walking sections total {(routeDistanceM / 1000).toFixed(1)}km.</p>
 
           {stores.length === 0 ? (
@@ -751,7 +752,7 @@ function SmartShoppingSheet({ onClose }: { onClose: () => void }) {
                       <Badge tone="green">{storePriceRow(store, priceTotals)?.matched}/{storePriceRow(store, priceTotals)?.totalItems} · {Math.round(store.distanceFromRouteMeters)}m walk</Badge>
                     </div>
                     <p className="text-xs font-semibold text-emerald-800 mb-2">Store subtotal · £{assignedIds.reduce((sum, id) => sum + (storePriceRow(store, priceTotals)?.pricedItems.find((line) => line.itemId === id)?.price ?? 0), 0).toFixed(2)}</p>
-                    <p className="text-xs text-slate-400 mb-2">{store.osmTags.shop ? `OSM shop=${store.osmTags.shop}` : 'OpenStreetMap place'}</p>
+                    <p className="text-xs text-slate-400 mb-2">{store.osmTags.provider === 'Google Places' ? 'Google Places location · price checked against the available store catalogue' : 'OpenStreetMap directory fallback · price checked against the available store catalogue'}</p>
                     {assignedIds.length === 0 ? (
                       <p className="text-xs text-slate-400">No items assigned to this stop.</p>
                     ) : (

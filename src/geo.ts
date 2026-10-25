@@ -156,23 +156,79 @@ function routeBoundingBox(route: GeoPoint[], paddingMeters: number): { south: nu
  * services.ts using actual route geometry, not just the bounding box). */
 const activeStoreSearches = new Map<string, Promise<AiResult<StoreCandidate[]>>>();
 
-export function findSupermarketsNearRoute(route: GeoPoint[], corridorWidthMeters: number): Promise<AiResult<StoreCandidate[]>> {
+export function findSupermarketsNearRoute(route: GeoPoint[], corridorWidthMeters: number, apiKey = ''): Promise<AiResult<StoreCandidate[]>> {
   const requestKey = `${corridorWidthMeters}:${route.map((point) => `${point.lat.toFixed(4)},${point.lon.toFixed(4)}`).join(';')}`;
   const active = activeStoreSearches.get(requestKey);
   if (active) return active;
-  const request = findSupermarketsNearRouteUncached(route, corridorWidthMeters).finally(() => activeStoreSearches.delete(requestKey));
+  const request = findSupermarketsNearRouteUncached(route, corridorWidthMeters, apiKey).finally(() => activeStoreSearches.delete(requestKey));
   activeStoreSearches.set(requestKey, request);
   return request;
 }
 
-async function findSupermarketsNearRouteUncached(route: GeoPoint[], corridorWidthMeters: number): Promise<AiResult<StoreCandidate[]>> {
+async function findSupermarketsNearRouteUncached(route: GeoPoint[], corridorWidthMeters: number, apiKey: string): Promise<AiResult<StoreCandidate[]>> {
   if (route.length === 0) {
     return { status: 'error', provider: 'local', errorType: 'invalid-response', message: 'No route geometry to search along.' };
   }
   const bbox = routeBoundingBox(route, corridorWidthMeters + 200);
-  const cacheKey = `overpass:${bbox.south.toFixed(3)},${bbox.west.toFixed(3)},${bbox.north.toFixed(3)},${bbox.east.toFixed(3)}`;
+  const cacheKey = `google-places:${bbox.south.toFixed(3)},${bbox.west.toFixed(3)},${bbox.north.toFixed(3)},${bbox.east.toFixed(3)}:${corridorWidthMeters}`;
   const cached = await aiCacheGet<StoreCandidate[]>(cacheKey);
   if (cached) return { status: 'ok', provider: 'local', data: cached };
+
+  let placesFallbackReason = '';
+  if (apiKey.trim()) {
+    try {
+      const points: GeoPoint[] = [];
+      let walkedSinceSearch = Infinity;
+      for (let i = 0; i < route.length; i++) {
+        if (walkedSinceSearch >= 650 || i === 0 || i === route.length - 1) {
+          points.push(route[i]);
+          walkedSinceSearch = 0;
+        }
+        if (i > 0) {
+          const a = route[i - 1], b = route[i];
+          const dy = (b.lat - a.lat) * 111_000;
+          const dx = (b.lon - a.lon) * 111_000 * Math.cos(a.lat * Math.PI / 180);
+          walkedSinceSearch += Math.hypot(dx, dy);
+        }
+      }
+      const found = new Map<string, StoreCandidate>();
+      for (const point of points.slice(0, 10)) {
+        const response = await fetch('https://places.googleapis.com/v1/places:searchNearby', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': apiKey, 'X-Goog-FieldMask': 'places.id,places.displayName,places.location,places.types,places.formattedAddress' },
+          body: JSON.stringify({
+            includedTypes: ['supermarket'],
+            maxResultCount: 20,
+            rankPreference: 'DISTANCE',
+            locationRestriction: { circle: { center: { latitude: point.lat, longitude: point.lon }, radius: Math.max(100, Math.min(500, corridorWidthMeters)) } }
+          })
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(`Google Places HTTP ${response.status}: ${body?.error?.message ?? response.statusText}`);
+        for (const place of body.places ?? []) {
+          if (!place.id || !place.location) continue;
+          const candidate: StoreCandidate = {
+            id: `google-${place.id}`,
+            name: place.displayName?.text ?? place.formattedAddress ?? 'Supermarket',
+            point: { lat: place.location.latitude, lon: place.location.longitude },
+            detourMeters: 0,
+            distanceFromRouteMeters: 0,
+            osmTags: { provider: 'Google Places', types: (place.types ?? []).join(',') },
+            assignedItemIds: []
+          };
+          found.set(candidate.id, candidate);
+        }
+      }
+      const places = [...found.values()];
+      await aiCacheSet(cacheKey, places);
+      return { status: 'ok', provider: 'local', data: places };
+    } catch (err) {
+      // Google Places is the primary source. If it is not enabled for the key,
+      // keep a public OSM directory as a resilient fallback.
+      placesFallbackReason = err instanceof Error ? err.message : String(err);
+      console.warn('Google Places store lookup failed; trying public directory fallback.', err);
+    }
+  }
 
   const query = `
     [out:json][timeout:20];
@@ -230,7 +286,7 @@ async function findSupermarketsNearRouteUncached(route: GeoPoint[], corridorWidt
       status: 'error',
       provider: 'local',
       errorType: /failed to fetch/i.test(String(err)) ? 'network' : 'unknown',
-      message: `Store discovery failed (Overpass API): ${err instanceof Error ? err.message : String(err)}. You can add shops manually.`
+      message: `${placesFallbackReason ? `Google Places failed (${placesFallbackReason}); ` : ''}store directory fallback failed: ${err instanceof Error ? err.message : String(err)}.`
     };
   }
 }
